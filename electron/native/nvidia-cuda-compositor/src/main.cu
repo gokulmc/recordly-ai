@@ -975,6 +975,37 @@ std::unique_ptr<WebcamStreamDecoder> createWebcamStreamDecoder(CUcontext context
     return std::make_unique<WebcamStreamDecoder>(context, options);
 }
 
+__device__ unsigned char clampByteDevice(int value);
+
+__device__ float mapScaledCoordinate(float dstCoordinate, int srcSize, int dstSize);
+
+__device__ unsigned char samplePlaneBilinear(
+    const unsigned char* plane,
+    int pitch,
+    int width,
+    int height,
+    float x,
+    float y);
+
+__device__ unsigned char samplePlaneCubic(
+    const unsigned char* plane,
+    int pitch,
+    int width,
+    int height,
+    float x,
+    float y);
+
+__device__ void sampleNv12UvBilinear(
+    const unsigned char* src,
+    int srcPitch,
+    int srcSurfaceHeight,
+    int srcWidth,
+    int srcHeight,
+    float lumaX,
+    float lumaY,
+    unsigned char* outU,
+    unsigned char* outV);
+
 __global__ void copyNv12Kernel(
     const unsigned char* src,
     int srcPitch,
@@ -992,17 +1023,24 @@ __global__ void copyNv12Kernel(
         return;
     }
 
-    const int sx = min(srcWidth - 1, (x * srcWidth) / dstWidth);
-    const int sy = min(srcHeight - 1, (y * srcHeight) / dstHeight);
-    dst[y * dstPitch + x] = src[sy * srcPitch + sx];
+    const float sx = mapScaledCoordinate(static_cast<float>(x), srcWidth, dstWidth);
+    const float sy = mapScaledCoordinate(static_cast<float>(y), srcHeight, dstHeight);
+    dst[y * dstPitch + x] = samplePlaneCubic(src, srcPitch, srcWidth, srcHeight, sx, sy);
 
     if ((x % 2) == 0 && (y % 2) == 0) {
-        const int suvX = min(srcWidth - 2, ((x * srcWidth) / dstWidth) & ~1);
-        const int suvY = min((srcHeight / 2) - 1, (y * srcHeight / dstHeight) / 2);
-        const unsigned char* srcUv = src + srcPitch * srcSurfaceHeight + suvY * srcPitch + suvX;
         unsigned char* dstUv = dst + dstChromaOffset + (y / 2) * dstPitch + x;
-        dstUv[0] = srcUv[0];
-        dstUv[1] = srcUv[1];
+        const float suvX = mapScaledCoordinate(static_cast<float>(x + 1), srcWidth, dstWidth);
+        const float suvY = mapScaledCoordinate(static_cast<float>(y + 1), srcHeight, dstHeight);
+        sampleNv12UvBilinear(
+            src,
+            srcPitch,
+            srcSurfaceHeight,
+            srcWidth,
+            srcHeight,
+            suvX,
+            suvY,
+            &dstUv[0],
+            &dstUv[1]);
     }
 }
 
@@ -1061,6 +1099,135 @@ __device__ bool isInsideRoundedRect(
     return dx * dx + dy * dy <= radius * radius;
 }
 
+__device__ float mapScaledCoordinate(float dstCoordinate, int srcSize, int dstSize) {
+    return ((dstCoordinate + 0.5f) * static_cast<float>(srcSize) /
+            static_cast<float>(max(1, dstSize))) -
+        0.5f;
+}
+
+__device__ unsigned char samplePlaneBilinear(
+    const unsigned char* plane,
+    int pitch,
+    int width,
+    int height,
+    float x,
+    float y) {
+    if (width <= 1 || height <= 1) {
+        const int sx = max(0, min(width - 1, static_cast<int>(floorf(x))));
+        const int sy = max(0, min(height - 1, static_cast<int>(floorf(y))));
+        return plane[sy * pitch + sx];
+    }
+
+    const float clampedX = fminf(static_cast<float>(width - 1), fmaxf(0.0f, x));
+    const float clampedY = fminf(static_cast<float>(height - 1), fmaxf(0.0f, y));
+    const int x0 = max(0, min(width - 1, static_cast<int>(floorf(clampedX))));
+    const int y0 = max(0, min(height - 1, static_cast<int>(floorf(clampedY))));
+    const int x1 = min(width - 1, x0 + 1);
+    const int y1 = min(height - 1, y0 + 1);
+    const float tx = clampedX - static_cast<float>(x0);
+    const float ty = clampedY - static_cast<float>(y0);
+
+    const float v00 = static_cast<float>(plane[y0 * pitch + x0]);
+    const float v10 = static_cast<float>(plane[y0 * pitch + x1]);
+    const float v01 = static_cast<float>(plane[y1 * pitch + x0]);
+    const float v11 = static_cast<float>(plane[y1 * pitch + x1]);
+    const float top = v00 + (v10 - v00) * tx;
+    const float bottom = v01 + (v11 - v01) * tx;
+    return clampByteDevice(static_cast<int>(top + (bottom - top) * ty + 0.5f));
+}
+
+__device__ float cubicWeight(float x) {
+    const float ax = fabsf(x);
+    if (ax <= 1.0f) {
+        return (1.5f * ax - 2.5f) * ax * ax + 1.0f;
+    }
+    if (ax < 2.0f) {
+        return ((-0.5f * ax + 2.5f) * ax - 4.0f) * ax + 2.0f;
+    }
+    return 0.0f;
+}
+
+__device__ unsigned char samplePlaneCubic(
+    const unsigned char* plane,
+    int pitch,
+    int width,
+    int height,
+    float x,
+    float y) {
+    if (width <= 2 || height <= 2) {
+        return samplePlaneBilinear(plane, pitch, width, height, x, y);
+    }
+
+    const float clampedX = fminf(static_cast<float>(width - 1), fmaxf(0.0f, x));
+    const float clampedY = fminf(static_cast<float>(height - 1), fmaxf(0.0f, y));
+    const int baseX = static_cast<int>(floorf(clampedX));
+    const int baseY = static_cast<int>(floorf(clampedY));
+    float total = 0.0f;
+    float weightTotal = 0.0f;
+
+    for (int oy = -1; oy <= 2; ++oy) {
+        const int sy = max(0, min(height - 1, baseY + oy));
+        const float wy = cubicWeight(clampedY - static_cast<float>(baseY + oy));
+        for (int ox = -1; ox <= 2; ++ox) {
+            const int sx = max(0, min(width - 1, baseX + ox));
+            const float weight = wy * cubicWeight(clampedX - static_cast<float>(baseX + ox));
+            total += static_cast<float>(plane[sy * pitch + sx]) * weight;
+            weightTotal += weight;
+        }
+    }
+
+    if (weightTotal > 0.0001f) {
+        total /= weightTotal;
+    }
+    return clampByteDevice(static_cast<int>(total + 0.5f));
+}
+
+__device__ void sampleNv12UvBilinear(
+    const unsigned char* src,
+    int srcPitch,
+    int srcSurfaceHeight,
+    int srcWidth,
+    int srcHeight,
+    float lumaX,
+    float lumaY,
+    unsigned char* outU,
+    unsigned char* outV) {
+    const int chromaWidth = max(1, srcWidth / 2);
+    const int chromaHeight = max(1, srcHeight / 2);
+    const float chromaX = fminf(
+        static_cast<float>(chromaWidth - 1),
+        fmaxf(0.0f, (lumaX - 0.5f) * 0.5f));
+    const float chromaY = fminf(
+        static_cast<float>(chromaHeight - 1),
+        fmaxf(0.0f, (lumaY - 0.5f) * 0.5f));
+    const int x0 = max(0, min(chromaWidth - 1, static_cast<int>(floorf(chromaX))));
+    const int y0 = max(0, min(chromaHeight - 1, static_cast<int>(floorf(chromaY))));
+    const int x1 = min(chromaWidth - 1, x0 + 1);
+    const int y1 = min(chromaHeight - 1, y0 + 1);
+    const float tx = chromaX - static_cast<float>(x0);
+    const float ty = chromaY - static_cast<float>(y0);
+    const unsigned char* uvPlane = src + srcPitch * srcSurfaceHeight;
+
+    const int x0Byte = x0 * 2;
+    const int x1Byte = x1 * 2;
+    const int y0Offset = y0 * srcPitch;
+    const int y1Offset = y1 * srcPitch;
+    const float u00 = static_cast<float>(uvPlane[y0Offset + x0Byte]);
+    const float u10 = static_cast<float>(uvPlane[y0Offset + x1Byte]);
+    const float u01 = static_cast<float>(uvPlane[y1Offset + x0Byte]);
+    const float u11 = static_cast<float>(uvPlane[y1Offset + x1Byte]);
+    const float v00 = static_cast<float>(uvPlane[y0Offset + x0Byte + 1]);
+    const float v10 = static_cast<float>(uvPlane[y0Offset + x1Byte + 1]);
+    const float v01 = static_cast<float>(uvPlane[y1Offset + x0Byte + 1]);
+    const float v11 = static_cast<float>(uvPlane[y1Offset + x1Byte + 1]);
+    const float uTop = u00 + (u10 - u00) * tx;
+    const float uBottom = u01 + (u11 - u01) * tx;
+    const float vTop = v00 + (v10 - v00) * tx;
+    const float vBottom = v01 + (v11 - v01) * tx;
+    *outU = clampByteDevice(static_cast<int>(uTop + (uBottom - uTop) * ty + 0.5f));
+    *outV = clampByteDevice(static_cast<int>(vTop + (vBottom - vTop) * ty + 0.5f));
+}
+
 __global__ void overlayContentRectNv12Kernel(
     const unsigned char* src,
     int srcPitch,
@@ -1096,19 +1263,30 @@ __global__ void overlayContentRectNv12Kernel(
     const int cropHeight = max(1, min(sourceCropHeight > 0 ? sourceCropHeight : srcHeight, srcHeight - sourceCropY));
     const int cropX = max(0, min(sourceCropX, srcWidth - 1));
     const int cropY = max(0, min(sourceCropY, srcHeight - 1));
-    const int srcX = min(srcWidth - 1, cropX + (localX * cropWidth) / contentWidth);
-    const int srcY = min(srcHeight - 1, cropY + (localY * cropHeight) / contentHeight);
-    dst[y * dstPitch + x] = src[srcY * srcPitch + srcX];
+    const float srcX = static_cast<float>(cropX) +
+        mapScaledCoordinate(static_cast<float>(localX), cropWidth, contentWidth);
+    const float srcY = static_cast<float>(cropY) +
+        mapScaledCoordinate(static_cast<float>(localY), cropHeight, contentHeight);
+    dst[y * dstPitch + x] = samplePlaneCubic(src, srcPitch, srcWidth, srcHeight, srcX, srcY);
 
     if ((x % 2) == 0 && (y % 2) == 0) {
         const int localUvX = max(0, min(contentWidth - 1, localX + 1));
         const int localUvY = max(0, min(contentHeight - 1, localY + 1));
-        const int srcUvX = min(srcWidth - 2, (cropX + ((localUvX * cropWidth) / contentWidth)) & ~1);
-        const int srcUvY = min((srcHeight / 2) - 1, (cropY + ((localUvY * cropHeight) / contentHeight)) / 2);
-        const unsigned char* srcUv = src + srcPitch * srcSurfaceHeight + srcUvY * srcPitch + srcUvX;
         unsigned char* dstUv = dst + dstChromaOffset + (y / 2) * dstPitch + x;
-        dstUv[0] = srcUv[0];
-        dstUv[1] = srcUv[1];
+        const float srcUvLumaX = static_cast<float>(cropX) +
+            mapScaledCoordinate(static_cast<float>(localUvX), cropWidth, contentWidth);
+        const float srcUvLumaY = static_cast<float>(cropY) +
+            mapScaledCoordinate(static_cast<float>(localUvY), cropHeight, contentHeight);
+        sampleNv12UvBilinear(
+            src,
+            srcPitch,
+            srcSurfaceHeight,
+            srcWidth,
+            srcHeight,
+            srcUvLumaX,
+            srcUvLumaY,
+            &dstUv[0],
+            &dstUv[1]);
     }
 }
 
@@ -1166,9 +1344,9 @@ __global__ void overlayContentTransformNv12Kernel(
         fminf(static_cast<float>(contentHeight - 1), fmaxf(0.0f, layoutYf - contentY));
     const int cropX = max(0, min(sourceCropX, srcWidth - 1));
     const int cropY = max(0, min(sourceCropY, srcHeight - 1));
-    const int sx = min(srcWidth - 1, cropX + __float2int_rd(localContentX * srcScaleX));
-    const int sy = min(srcHeight - 1, cropY + __float2int_rd(localContentY * srcScaleY));
-    dst[y * dstPitch + x] = src[sy * srcPitch + sx];
+    const float sx = static_cast<float>(cropX) + (localContentX + 0.5f) * srcScaleX - 0.5f;
+    const float sy = static_cast<float>(cropY) + (localContentY + 0.5f) * srcScaleY - 0.5f;
+    dst[y * dstPitch + x] = samplePlaneCubic(src, srcPitch, srcWidth, srcHeight, sx, sy);
 
     if ((x % 2) == 0 && (y % 2) == 0 && x + 1 < dstWidth && y + 1 < dstHeight) {
         const float uvLayoutXf = (static_cast<float>(x + 1) - zoomX) * invZoomScale;
@@ -1187,14 +1365,19 @@ __global__ void overlayContentTransformNv12Kernel(
                 fminf(static_cast<float>(contentWidth - 1), fmaxf(0.0f, uvLayoutXf - contentX));
             const float uvLocalContentY =
                 fminf(static_cast<float>(contentHeight - 1), fmaxf(0.0f, uvLayoutYf - contentY));
-            const int suvX =
-                min(srcWidth - 2, (cropX + __float2int_rd(uvLocalContentX * srcScaleX)) & ~1);
-            const int suvY =
-                min((srcHeight / 2) - 1, (cropY + __float2int_rd(uvLocalContentY * srcScaleY)) / 2);
-            const unsigned char* srcUv = src + srcPitch * srcSurfaceHeight + suvY * srcPitch + suvX;
             unsigned char* dstUv = dst + dstChromaOffset + (y / 2) * dstPitch + x;
-            dstUv[0] = srcUv[0];
-            dstUv[1] = srcUv[1];
+            const float suvX = static_cast<float>(cropX) + (uvLocalContentX + 0.5f) * srcScaleX - 0.5f;
+            const float suvY = static_cast<float>(cropY) + (uvLocalContentY + 0.5f) * srcScaleY - 0.5f;
+            sampleNv12UvBilinear(
+                src,
+                srcPitch,
+                srcSurfaceHeight,
+                srcWidth,
+                srcHeight,
+                suvX,
+                suvY,
+                &dstUv[0],
+                &dstUv[1]);
         }
     }
 }
@@ -1536,9 +1719,9 @@ __global__ void compositeStaticNv12Kernel(
     if (inside) {
         const float localX = fminf(static_cast<float>(contentWidth - 1), fmaxf(0.0f, layoutXf - contentX));
         const float localY = fminf(static_cast<float>(contentHeight - 1), fmaxf(0.0f, layoutYf - contentY));
-        const int sx = min(srcWidth - 1, cropX + static_cast<int>((localX * cropWidth) / contentWidth));
-        const int sy = min(srcHeight - 1, cropY + static_cast<int>((localY * cropHeight) / contentHeight));
-        outY = src[sy * srcPitch + sx];
+        const float sx = static_cast<float>(cropX) + mapScaledCoordinate(localX, cropWidth, contentWidth);
+        const float sy = static_cast<float>(cropY) + mapScaledCoordinate(localY, cropHeight, contentHeight);
+        outY = samplePlaneCubic(src, srcPitch, srcWidth, srcHeight, sx, sy);
     } else {
         const bool shadowInside =
             shadowIntensityPct > 0 &&
@@ -1558,10 +1741,10 @@ __global__ void compositeStaticNv12Kernel(
     if (webcam && isInsideRoundedRect(x, y, webcamX, webcamY, webcamSize, webcamSize, webcamRadius)) {
         const int localX = max(0, min(webcamSize - 1, x - webcamX));
         const int localY = max(0, min(webcamSize - 1, y - webcamY));
-        const int sampleX = min(webcamFrameWidth - 1, (localX * webcamFrameWidth) / webcamSize);
-        const int sampleY = min(webcamFrameHeight - 1, (localY * webcamFrameHeight) / webcamSize);
-        const int mirroredX = webcamMirror ? webcamFrameWidth - 1 - sampleX : sampleX;
-        outY = webcam[sampleY * webcamFrameWidth + mirroredX];
+        const float sampleX = mapScaledCoordinate(static_cast<float>(localX), webcamFrameWidth, webcamSize);
+        const float sampleY = mapScaledCoordinate(static_cast<float>(localY), webcamFrameHeight, webcamSize);
+        const float mirroredX = webcamMirror ? static_cast<float>(webcamFrameWidth - 1) - sampleX : sampleX;
+        outY = samplePlaneCubic(webcam, webcamFrameWidth, webcamFrameWidth, webcamFrameHeight, mirroredX, sampleY);
     }
     unsigned char cursorYValue = 0;
     unsigned char cursorUValue = 128;
@@ -1639,13 +1822,18 @@ __global__ void compositeStaticNv12Kernel(
         if (uvInside) {
             const float localX = fminf(static_cast<float>(contentWidth - 1), fmaxf(0.0f, uvLayoutXf - contentX));
             const float localY = fminf(static_cast<float>(contentHeight - 1), fmaxf(0.0f, uvLayoutYf - contentY));
-            const int suvX =
-                min(srcWidth - 2, (cropX + static_cast<int>((localX * cropWidth) / contentWidth)) & ~1);
-            const int suvY =
-                min((srcHeight / 2) - 1, (cropY + static_cast<int>(localY * cropHeight / contentHeight)) / 2);
-            const unsigned char* srcUv = src + srcPitch * srcSurfaceHeight + suvY * srcPitch + suvX;
-            dstUv[0] = srcUv[0];
-            dstUv[1] = srcUv[1];
+            const float suvX = static_cast<float>(cropX) + mapScaledCoordinate(localX, cropWidth, contentWidth);
+            const float suvY = static_cast<float>(cropY) + mapScaledCoordinate(localY, cropHeight, contentHeight);
+            sampleNv12UvBilinear(
+                src,
+                srcPitch,
+                srcSurfaceHeight,
+                srcWidth,
+                srcHeight,
+                suvX,
+                suvY,
+                &dstUv[0],
+                &dstUv[1]);
         } else {
             if (background) {
                 const unsigned char* bgUv = background + dstWidth * dstHeight + (y / 2) * dstWidth + x;
@@ -1667,15 +1855,19 @@ __global__ void compositeStaticNv12Kernel(
                 webcamRadius)) {
             const int localX = max(0, min(webcamSize - 1, x + 1 - webcamX));
             const int localY = max(0, min(webcamSize - 1, y + 1 - webcamY));
-            const int sampleX = min(webcamFrameWidth - 1, (localX * webcamFrameWidth) / webcamSize);
-            const int sampleY = min(webcamFrameHeight - 1, (localY * webcamFrameHeight) / webcamSize);
-            const int mirroredX = webcamMirror ? webcamFrameWidth - 1 - sampleX : sampleX;
-            const int webcamUvX = min(webcamFrameWidth - 2, mirroredX & ~1);
-            const int webcamUvY = min((webcamFrameHeight / 2) - 1, sampleY / 2);
-            const unsigned char* webcamUv =
-                webcam + webcamFrameWidth * webcamFrameHeight + webcamUvY * webcamFrameWidth + webcamUvX;
-            dstUv[0] = webcamUv[0];
-            dstUv[1] = webcamUv[1];
+            const float sampleX = mapScaledCoordinate(static_cast<float>(localX), webcamFrameWidth, webcamSize);
+            const float sampleY = mapScaledCoordinate(static_cast<float>(localY), webcamFrameHeight, webcamSize);
+            const float mirroredX = webcamMirror ? static_cast<float>(webcamFrameWidth - 1) - sampleX : sampleX;
+            sampleNv12UvBilinear(
+                webcam,
+                webcamFrameWidth,
+                webcamFrameHeight,
+                webcamFrameWidth,
+                webcamFrameHeight,
+                mirroredX,
+                sampleY,
+                &dstUv[0],
+                &dstUv[1]);
         }
         unsigned char cursorUvY = 0;
         unsigned char cursorUvU = 128;
@@ -1770,26 +1962,37 @@ __global__ void overlayWebcamNv12Kernel(
     if (isInsideRoundedRect(x, y, webcamX, webcamY, webcamSize, webcamSize, webcamRadius)) {
         const int webcamLocalX = max(0, min(webcamSize - 1, x - webcamX));
         const int webcamLocalY = max(0, min(webcamSize - 1, y - webcamY));
-        const int sampleX = min(webcamFrameWidth - 1, (webcamLocalX * webcamFrameWidth) / webcamSize);
-        const int sampleY = min(webcamFrameHeight - 1, (webcamLocalY * webcamFrameHeight) / webcamSize);
-        const int mirroredX = webcamMirror ? webcamFrameWidth - 1 - sampleX : sampleX;
-        dst[y * dstPitch + x] = webcam[sampleY * webcamFrameWidth + mirroredX];
+        const float sampleX =
+            mapScaledCoordinate(static_cast<float>(webcamLocalX), webcamFrameWidth, webcamSize);
+        const float sampleY =
+            mapScaledCoordinate(static_cast<float>(webcamLocalY), webcamFrameHeight, webcamSize);
+        const float mirroredX = webcamMirror ? static_cast<float>(webcamFrameWidth - 1) - sampleX : sampleX;
+        dst[y * dstPitch + x] =
+            samplePlaneCubic(webcam, webcamFrameWidth, webcamFrameWidth, webcamFrameHeight, mirroredX, sampleY);
     }
 
     if ((x % 2) == 0 && (y % 2) == 0 && x + 1 < dstWidth && y + 1 < dstHeight &&
         isInsideRoundedRect(x + 1, y + 1, webcamX, webcamY, webcamSize, webcamSize, webcamRadius)) {
         const int uvLocalX = max(0, min(webcamSize - 1, x + 1 - webcamX));
         const int uvLocalY = max(0, min(webcamSize - 1, y + 1 - webcamY));
-        const int uvSampleX = min(webcamFrameWidth - 1, (uvLocalX * webcamFrameWidth) / webcamSize);
-        const int uvSampleY = min(webcamFrameHeight - 1, (uvLocalY * webcamFrameHeight) / webcamSize);
-        const int uvMirroredX = webcamMirror ? webcamFrameWidth - 1 - uvSampleX : uvSampleX;
-        const int webcamUvX = min(webcamFrameWidth - 2, uvMirroredX & ~1);
-        const int webcamUvY = min((webcamFrameHeight / 2) - 1, uvSampleY / 2);
-        const unsigned char* webcamUv =
-            webcam + webcamFrameWidth * webcamFrameHeight + webcamUvY * webcamFrameWidth + webcamUvX;
         unsigned char* dstUv = dst + dstChromaOffset + (y / 2) * dstPitch + x;
-        dstUv[0] = webcamUv[0];
-        dstUv[1] = webcamUv[1];
+        const float uvSampleX =
+            mapScaledCoordinate(static_cast<float>(uvLocalX), webcamFrameWidth, webcamSize);
+        const float uvSampleY =
+            mapScaledCoordinate(static_cast<float>(uvLocalY), webcamFrameHeight, webcamSize);
+        const float uvMirroredX = webcamMirror
+            ? static_cast<float>(webcamFrameWidth - 1) - uvSampleX
+            : uvSampleX;
+        sampleNv12UvBilinear(
+            webcam,
+            webcamFrameWidth,
+            webcamFrameHeight,
+            webcamFrameWidth,
+            webcamFrameHeight,
+            uvMirroredX,
+            uvSampleY,
+            &dstUv[0],
+            &dstUv[1]);
     }
 }
 
