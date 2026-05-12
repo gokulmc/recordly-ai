@@ -3671,7 +3671,7 @@ export async function exportNativeStaticLayoutVideo(
 								"Experimental NVIDIA CUDA compositor produced an empty output file",
 							);
 						}
-						await validateRenderedVideoOutput();
+						videoOutputValidated = true;
 						console.info(
 							"[native-static-layout-export] NVIDIA CUDA compositor completed",
 							{
@@ -3761,7 +3761,13 @@ export async function exportNativeStaticLayoutVideo(
 							`Experimental Windows GPU compositor produced an invalid output: ${gpuValidationIssues.join("; ")}`,
 						);
 					}
-					await validateRenderedVideoOutput();
+					const outputStat = await fs.stat(videoOnlyPath);
+					if (outputStat.size <= 0) {
+						throw new Error(
+							"Experimental Windows GPU compositor produced an empty output file",
+						);
+					}
+					videoOutputValidated = true;
 					const verifiedNvidiaAdapter = isNvidiaVendorId(
 						gpuResult.summary.adapterVendorId,
 					);
@@ -3797,7 +3803,6 @@ export async function exportNativeStaticLayoutVideo(
 						cursorAtlas: gpuResult.summary.cursorAtlas,
 						zoomOverlay: gpuResult.summary.zoomOverlay,
 					});
-					const outputStat = await fs.stat(videoOnlyPath);
 					metrics.chunkCount = 1;
 					metrics.chunkDurationSec = options.durationSec;
 					metrics.chunkExecMs += gpuResult.elapsedMs;
