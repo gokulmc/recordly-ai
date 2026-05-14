@@ -491,6 +491,15 @@ export function validateNvidiaCudaExportSummary(
 	if (!summary.outputVideo) {
 		issues.push("missing output video probe");
 	}
+	if (expected.requiresTimelineSync) {
+		if (!summary.outputAudio) {
+			issues.push("missing output audio stream");
+		} else if (outputAudioDurationSec === null) {
+			issues.push("missing output audio duration");
+		} else if (outputAudioDurationSec <= 0) {
+			issues.push("output audio duration is not positive");
+		}
+	}
 	if (expected.requiresTimelineSync && !isNvidiaCudaTimestampAlignedSummary(summary)) {
 		issues.push("CUDA timeline mode is not timestamp-aligned for audio export");
 	}
@@ -516,6 +525,7 @@ export function validateNvidiaCudaExportSummary(
 	}
 	if (
 		outputAudioDurationSec !== null &&
+		outputAudioDurationSec > 0 &&
 		Math.abs(outputAudioDurationSec - expectedDurationSec) > durationToleranceSec
 	) {
 		issues.push(
