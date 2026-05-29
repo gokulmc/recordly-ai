@@ -30,7 +30,6 @@ import {
 	validateRecordedVideo,
 } from "./diagnostics";
 import { emitRecordingInterrupted } from "./events";
-import { getFinalMacCompanionAudioPath } from "./macCompanionAudio";
 import { pruneAutoRecordings } from "./prune";
 
 export function waitForNativeCaptureStart(process: ChildProcessWithoutNullStreams) {
@@ -120,10 +119,12 @@ export async function muxNativeMacRecordingWithAudio(
 ) {
 	console.log("[mac-mux] Optimization active: keeping tracks separate.");
 
+	const videoPathWithoutExt = videoPath.replace(/\.[^.]+$/u, "");
+
 	// Optimization: instead of heavy FFmpeg muxing, we ensure audio sidecars
 	// are available alongside the video for the editor.
 	if (systemAudioPath) {
-		const finalSystemPath = getFinalMacCompanionAudioPath(videoPath, systemAudioPath, "system");
+		const finalSystemPath = `${videoPathWithoutExt}.system.wav`;
 		try {
 			const stat = await fs.stat(systemAudioPath);
 			if (stat.size > 0 && systemAudioPath !== finalSystemPath) {
@@ -135,7 +136,7 @@ export async function muxNativeMacRecordingWithAudio(
 	}
 
 	if (microphonePath) {
-		const finalMicPath = getFinalMacCompanionAudioPath(videoPath, microphonePath, "mic");
+		const finalMicPath = `${videoPathWithoutExt}.mic.wav`;
 		try {
 			const stat = await fs.stat(microphonePath);
 			if (stat.size > 0 && microphonePath !== finalMicPath) {

@@ -5,8 +5,6 @@ import { fromFileUrl } from "../../projectPersistence";
 import { WAVEFORM_DEFAULT_PEAK_COUNT } from "../core/constants";
 import type { AudioPeaksData } from "../core/timelineTypes";
 
-const EMPTY_FALLBACK_RESOURCES: string[] = [];
-
 function buildSidecarAudioCandidates(sourcePath: string): string[] {
 	const normalized = sourcePath.replace(/\\/g, "/");
 	const lastSlash = normalized.lastIndexOf("/");
@@ -20,8 +18,6 @@ function buildSidecarAudioCandidates(sourcePath: string): string[] {
 		`${dir}${baseName}.mic.wav`,
 		`${dir}${baseName}.system.m4a`,
 		`${dir}${baseName}.mic.m4a`,
-		`${dir}${baseName}.system.webm`,
-		`${dir}${baseName}.mic.webm`,
 	];
 }
 
@@ -41,7 +37,6 @@ function extractLocalPathFromMediaServerUrl(input: string): string | null {
 
 interface TimelineAudioPeaksOptions {
 	enableSourceSidecarFallback?: boolean;
-	fallbackResources?: string[];
 	peakCount?: number;
 }
 
@@ -58,7 +53,6 @@ export function useTimelineAudioPeaks(
 	const [loading, setLoading] = useState(false);
 	const sourceRef = useRef(mediaResource);
 	const enableSourceSidecarFallback = options.enableSourceSidecarFallback ?? false;
-	const fallbackResources = options.fallbackResources ?? EMPTY_FALLBACK_RESOURCES;
 	const peakCount = options.peakCount ?? WAVEFORM_DEFAULT_PEAK_COUNT;
 
 	useEffect(() => {
@@ -89,29 +83,25 @@ export function useTimelineAudioPeaks(
 				// fallthrough
 			}
 
-			if (!enableSourceSidecarFallback && fallbackResources.length === 0) {
+			if (!enableSourceSidecarFallback) {
 				if (!cancelled && sourceRef.current === mediaResource) {
 					setLoading(false);
 				}
 				return;
 			}
 
-			let sourceSidecarCandidates: string[] = [];
-			if (enableSourceSidecarFallback) {
-				const localPathFromServer = extractLocalPathFromMediaServerUrl(mediaResource);
-				const localSourcePath =
-					localPathFromServer ||
-					(/^file:\/\//i.test(mediaResource)
-						? fromFileUrl(mediaResource)
-						: mediaResource);
-				if (localSourcePath) {
-					sourceSidecarCandidates = buildSidecarAudioCandidates(localSourcePath);
+			const localPathFromServer = extractLocalPathFromMediaServerUrl(mediaResource);
+			const localSourcePath =
+				localPathFromServer ||
+				(/^file:\/\//i.test(mediaResource) ? fromFileUrl(mediaResource) : mediaResource);
+			if (!localSourcePath) {
+				if (!cancelled && sourceRef.current === mediaResource) {
+					setLoading(false);
 				}
+				return;
 			}
 
-			const candidates = Array.from(
-				new Set([...fallbackResources, ...sourceSidecarCandidates]),
-			);
+			const candidates = buildSidecarAudioCandidates(localSourcePath);
 			for (const candidate of candidates) {
 				try {
 					const result = await tryGenerate(candidate);
@@ -135,7 +125,7 @@ export function useTimelineAudioPeaks(
 		return () => {
 			cancelled = true;
 		};
-	}, [mediaResource, enableSourceSidecarFallback, fallbackResources, peakCount]);
+	}, [mediaResource, enableSourceSidecarFallback, peakCount]);
 
 	return { peaks, loading };
 }

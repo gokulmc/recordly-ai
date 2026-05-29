@@ -21,44 +21,6 @@ const MP4_AUDIO_CODEC = "mp4a.40.2";
 const OFFLINE_AUDIO_SAMPLE_RATE = 48_000;
 const OFFLINE_ENCODE_CHUNK_FRAMES = 1024;
 const OFFLINE_CHUNK_DURATION_SEC = 30;
-const OFFLINE_MIX_SOFT_LIMITER_THRESHOLD = 0.9;
-const OFFLINE_MIX_SOFT_LIMITER_CEILING = 0.985;
-
-function softLimitSample(sample: number): number {
-	const magnitude = Math.abs(sample);
-	if (magnitude <= OFFLINE_MIX_SOFT_LIMITER_THRESHOLD) {
-		return sample;
-	}
-
-	const sign = sample < 0 ? -1 : 1;
-	const kneeRange = 1 - OFFLINE_MIX_SOFT_LIMITER_THRESHOLD;
-	const limitedMagnitude =
-		OFFLINE_MIX_SOFT_LIMITER_THRESHOLD +
-		kneeRange * Math.tanh((magnitude - OFFLINE_MIX_SOFT_LIMITER_THRESHOLD) / kneeRange);
-	return sign * Math.min(OFFLINE_MIX_SOFT_LIMITER_CEILING, limitedMagnitude);
-}
-
-export function softLimitOfflineMixPeaksInPlace(buffer: AudioBuffer): boolean {
-	let changed = false;
-	for (let channel = 0; channel < buffer.numberOfChannels; channel += 1) {
-		const data = buffer.getChannelData(channel);
-		for (let index = 0; index < data.length; index += 1) {
-			const sample = data[index];
-			if (!Number.isFinite(sample)) {
-				data[index] = 0;
-				changed = true;
-				continue;
-			}
-
-			const limited = softLimitSample(sample);
-			if (limited !== sample) {
-				data[index] = limited;
-				changed = true;
-			}
-		}
-	}
-	return changed;
-}
 
 function resolveSourceTrackGain(
 	sourceAudioTrackSettings: SourceAudioTrackSettings | undefined,
@@ -985,7 +947,6 @@ export class AudioProcessor {
 
 			const rendered = await offlineCtx.startRendering();
 			if (this.cancelled) break;
-			softLimitOfflineMixPeaksInPlace(rendered);
 
 			await onChunk(rendered, outputOffsetSec, i);
 

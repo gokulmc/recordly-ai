@@ -32,7 +32,6 @@ let hudOverlayHiddenFromCapture = true;
 let hudOverlayCaptureProtectionLoaded = false;
 let hudOverlayFallbackExpanded = false;
 let hudOverlayIgnoringMouse = true;
-let hudOverlaySourceSelectionActive = false;
 let hudOverlayMouseReassertTimer: NodeJS.Timeout | null = null;
 let hudOverlayRecordingActive = false;
 let hudOverlayWebcamPreviewVisible = false;
@@ -288,12 +287,7 @@ function setHudOverlayFallbackExpanded(expanded: boolean) {
 }
 
 function setHudOverlayMousePassthrough(ignore: boolean) {
-	hudOverlayIgnoringMouse =
-		hudOverlaySourceSelectionActive && !hudOverlayRecordingActive
-			? true
-			: hudOverlayRecordingActive
-				? false
-				: ignore;
+	hudOverlayIgnoringMouse = hudOverlayRecordingActive ? false : ignore;
 
 	if (hudOverlayMouseReassertTimer) {
 		clearTimeout(hudOverlayMouseReassertTimer);
@@ -311,21 +305,9 @@ function setHudOverlayMousePassthrough(ignore: boolean) {
 		return;
 	}
 
-	if (hudOverlaySourceSelectionActive) {
-		hudOverlayFallbackExpanded = false;
-		hudOverlayWindow.setIgnoreMouseEvents(false);
-		return;
-	}
-
 	const mousePassthroughSupported = isHudOverlayMousePassthroughSupported();
 	if (!mousePassthroughSupported) {
-		if (
-			shouldResizeHudOverlayFallback(
-				mousePassthroughSupported,
-				hudOverlayRecordingActive,
-				hudOverlaySourceSelectionActive,
-			)
-		) {
+		if (shouldResizeHudOverlayFallback(mousePassthroughSupported, hudOverlayRecordingActive)) {
 			setHudOverlayFallbackExpanded(!ignore);
 		}
 		hudOverlayWindow.setIgnoreMouseEvents(false);
@@ -342,17 +324,6 @@ function setHudOverlayMousePassthrough(ignore: boolean) {
 
 ipcMain.on("hud-overlay-set-ignore-mouse", (_event, ignore: boolean) => {
 	setHudOverlayMousePassthrough(Boolean(ignore));
-});
-
-ipcMain.on("hud-overlay-set-source-selection-active", (_event, active: boolean) => {
-	hudOverlaySourceSelectionActive = Boolean(active);
-	if (hudOverlaySourceSelectionActive) {
-		hudOverlayFallbackExpanded = false;
-		applyHudOverlayBounds();
-		return;
-	}
-
-	setHudOverlayMousePassthrough(hudOverlayIgnoringMouse);
 });
 
 // Keep compatibility with existing drag IPC/state.

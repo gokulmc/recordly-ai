@@ -7,7 +7,6 @@ import {
 	normalizeBrowserMicrophoneProfile,
 	resolveBrowserCaptureCursorPolicy,
 	resolveLinuxPortalCursorPresentation,
-	shouldLockHudDuringDisplaySelection,
 	shouldUseLinuxPortalCapture,
 	shouldUseNativeWindowsCaptureForSource,
 } from "./useScreenRecorder";
@@ -242,32 +241,6 @@ describe("shouldUseLinuxPortalCapture", () => {
 			shouldUseLinuxPortalCapture({
 				browserCaptureSourceId: "screen:42:0",
 				selectedSourceId: "screen:linux-portal",
-			}),
-		).toBe(false);
-	});
-});
-
-describe("shouldLockHudDuringDisplaySelection", () => {
-	it("locks HUD fallback resizing while Linux portal selection is active", () => {
-		expect(
-			shouldLockHudDuringDisplaySelection({
-				platform: "linux",
-				useLinuxPortal: true,
-			}),
-		).toBe(true);
-	});
-
-	it("keeps non-portal capture flows interactive", () => {
-		expect(
-			shouldLockHudDuringDisplaySelection({
-				platform: "linux",
-				useLinuxPortal: false,
-			}),
-		).toBe(false);
-		expect(
-			shouldLockHudDuringDisplaySelection({
-				platform: "win32",
-				useLinuxPortal: true,
 			}),
 		).toBe(false);
 	});
