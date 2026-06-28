@@ -909,6 +909,97 @@ export function createEditorWindow(): BrowserWindow {
 	return win;
 }
 
+export interface SmokeExportWindowOpts {
+	projectPath: string;
+	videoPath: string;
+	outputPath: string;
+	backendPreference?: "breeze" | "webcodecs" | "auto";
+	quality?: "medium" | "good" | "high" | "source";
+	fps?: number;
+}
+
+export interface SmokeExportWindowHandle {
+	window: BrowserWindow;
+	done: Promise<string>; // resolves with outputPath on success, rejects on failure
+}
+
+/**
+ * Creates a hidden export-only BrowserWindow that loads the recordly editor in
+ * smoke-export mode and auto-runs the export, then closes itself.
+ *
+ * Isolation guarantees vs createEditorWindow():
+ *  - Never calls win.show() — remains invisible throughout
+ *  - Params passed explicitly; does NOT read process.env vars
+ *  - Does NOT mutate global project/video/session state (no loadProjectFromPath)
+ *  - The pipeline is the sole cursor-sidecar owner for this run (M3)
+ *
+ * The `done` promise resolves with `outputPath` when the renderer writes the
+ * success report and closes, or rejects with the error from the failure report.
+ */
+export function createSmokeExportWindow(opts: SmokeExportWindowOpts): SmokeExportWindowHandle {
+	const { projectPath, videoPath, outputPath, backendPreference, quality, fps } = opts;
+
+	const queryObj: Record<string, string> = {
+		windowType: "editor",
+		smokeExport: "1",
+		smokeProject: projectPath,
+		// VideoEditor.tsx expects a file:// URL and calls fromFileUrl() on it
+		smokeInput: videoPath.startsWith("file://") ? videoPath : `file://${videoPath}`,
+		smokeOutput: outputPath,
+	};
+	if (backendPreference) queryObj.smokeBackendPreference = backendPreference;
+	if (quality) queryObj.smokeQuality = quality;
+	if (fps !== undefined) queryObj.smokeFps = String(fps);
+
+	const win = new BrowserWindow({
+		width: 1280,
+		height: 800,
+		show: false, // never shown — export-only window
+		backgroundColor: "#000000",
+		webPreferences: {
+			preload: path.join(electronWindowsDir, "preload.mjs"),
+			nodeIntegration: false,
+			contextIsolation: true,
+			webSecurity: false,
+			backgroundThrottling: false,
+		},
+	});
+
+	const done = new Promise<string>((resolve, reject) => {
+		win.once("closed", async () => {
+			const reportPath = `${outputPath}.report.json`;
+			try {
+				const raw = await fs.readFile(reportPath, "utf-8");
+				const report = JSON.parse(raw) as {
+					success: boolean;
+					outputPath?: string;
+					error?: string;
+				};
+				if (report.success) {
+					resolve(report.outputPath ?? outputPath);
+				} else {
+					reject(new Error(report.error ?? "Smoke export failed (no error message)"));
+				}
+			} catch (err) {
+				reject(
+					new Error(`Smoke export window closed without writing report: ${String(err)}`),
+				);
+			}
+		});
+	});
+
+	if (VITE_DEV_SERVER_URL) {
+		win.loadURL(`${VITE_DEV_SERVER_URL}?${new URLSearchParams(queryObj).toString()}`);
+	} else {
+		// In packaged mode use loadFile with explicit query — do NOT call
+		// loadPackagedEditorWindow(), which reads env vars via getEditorWindowQuery().
+		const indexHtmlPath = path.join(RENDERER_DIST, "index.html");
+		void win.loadFile(indexHtmlPath, { query: queryObj });
+	}
+
+	return { window: win, done };
+}
+
 export function createSourceSelectorWindow(): BrowserWindow {
 	const { width, height } = getScreen().getPrimaryDisplay().workAreaSize;
 

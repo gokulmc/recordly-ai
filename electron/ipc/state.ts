@@ -102,6 +102,15 @@ export let cachedNativeVideoEncoder: {
 // ── Native helper migration ───────────────────────────────────────────────────
 export let nativeHelperMigrationPromise: Promise<void> | null = null;
 
+// ── Auto-demo pipeline (M3 dual-track) ───────────────────────────────────────
+// When true, the pipeline is the sole owner of the cursor sidecar:
+// native cursor sampling is skipped and recordly's finalize will NOT write
+// ${video}.cursor.json (the pipeline writes its synthesized sidecar instead).
+export let noCursorTelemetryMode = false;
+export function setNoCursorTelemetryMode(v: boolean) {
+	noCursorTelemetryMode = v;
+}
+
 // ── Cursor interaction capture types ─────────────────────────────────────────
 export type { CursorInteractionType, CursorTelemetryPoint };
 

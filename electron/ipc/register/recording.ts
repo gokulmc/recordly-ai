@@ -115,7 +115,9 @@ import {
 	setNativeCaptureSystemAudioPath,
 	setNativeCaptureTargetPath,
 	setNativeScreenRecordingActive,
+	noCursorTelemetryMode,
 	setPendingCursorSamples,
+	setNoCursorTelemetryMode,
 	setWindowsCaptureOutputBuffer,
 	setWindowsCapturePaused,
 	setWindowsCaptureProcess,
@@ -1810,49 +1812,63 @@ export function registerRecordingHandlers(
 		}
 	});
 
-	ipcMain.handle("set-recording-state", (_, recording: boolean) => {
-		if (recording) {
-			stopCursorCapture();
-			stopInteractionCapture();
-			startWindowBoundsCapture();
-			void startNativeCursorMonitor();
-			setIsCursorCaptureActive(true);
-			setActiveCursorSamples([]);
-			setPendingCursorSamples([]);
-			setCursorCaptureStartTimeMs(Date.now());
-			resetCursorCaptureClock();
-			setLinuxCursorScreenPoint(null);
-			setLastLeftClick(null);
-			sampleCursorPoint();
-			startCursorSampling();
-			void startInteractionCapture();
-		} else {
-			setIsCursorCaptureActive(false);
-			stopCursorCapture();
-			stopInteractionCapture();
-			stopWindowBoundsCapture();
-			stopNativeCursorMonitor();
-			showCursor();
-			setLinuxCursorScreenPoint(null);
-			resetCursorCaptureClock();
-			snapshotCursorTelemetryForPersistence();
-			setActiveCursorSamples([]);
-		}
-
-		const source = selectedSource || { name: "Screen" };
-		BrowserWindow.getAllWindows().forEach((window) => {
-			if (!window.isDestroyed()) {
-				window.webContents.send("recording-state-changed", {
-					recording,
-					sourceName: source.name,
-				});
+	// Options.noCursorTelemetry is set by the auto-demo pipeline (M3 dual-track).
+	// When true the pipeline is the sole sidecar owner — we skip all cursor
+	// sampling so native finalize never writes ${video}.cursor.json.
+	ipcMain.handle(
+		"set-recording-state",
+		(_, recording: boolean, options?: { noCursorTelemetry?: boolean }) => {
+			if (recording) {
+				if (options?.noCursorTelemetry) {
+					setNoCursorTelemetryMode(true);
+				}
+				stopCursorCapture();
+				stopInteractionCapture();
+				startWindowBoundsCapture();
+				void startNativeCursorMonitor();
+				setIsCursorCaptureActive(true);
+				setActiveCursorSamples([]);
+				setPendingCursorSamples([]);
+				if (!noCursorTelemetryMode) {
+					setCursorCaptureStartTimeMs(Date.now());
+					resetCursorCaptureClock();
+					setLinuxCursorScreenPoint(null);
+					setLastLeftClick(null);
+					sampleCursorPoint();
+					startCursorSampling();
+					void startInteractionCapture();
+				}
+			} else {
+				setIsCursorCaptureActive(false);
+				stopCursorCapture();
+				stopInteractionCapture();
+				stopWindowBoundsCapture();
+				stopNativeCursorMonitor();
+				showCursor();
+				setLinuxCursorScreenPoint(null);
+				resetCursorCaptureClock();
+				if (!noCursorTelemetryMode) {
+					snapshotCursorTelemetryForPersistence();
+				}
+				setActiveCursorSamples([]);
+				setNoCursorTelemetryMode(false);
 			}
-		});
 
-		if (onRecordingStateChange) {
-			onRecordingStateChange(recording, source.name);
-		}
-	});
+			const source = selectedSource || { name: "Screen" };
+			BrowserWindow.getAllWindows().forEach((window) => {
+				if (!window.isDestroyed()) {
+					window.webContents.send("recording-state-changed", {
+						recording,
+						sourceName: source.name,
+					});
+				}
+			});
+
+			if (onRecordingStateChange) {
+				onRecordingStateChange(recording, source.name);
+			}
+		},
+	);
 
 	ipcMain.handle("pause-cursor-capture", (_, pausedAtMs?: unknown) => {
 		pauseCursorCaptureAtBoundary(normalizeRendererTimestampMs(pausedAtMs));

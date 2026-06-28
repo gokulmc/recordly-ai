@@ -13,6 +13,7 @@ import {
 	nativeCaptureSystemAudioPath,
 	nativeCaptureTargetPath,
 	nativeScreenRecordingActive,
+	noCursorTelemetryMode,
 	selectedSource,
 	setCurrentProjectPath,
 	setCurrentVideoPath,
@@ -219,13 +220,18 @@ export async function finalizeStoredVideo(videoPath: string) {
 		throw error;
 	}
 
-	snapshotCursorTelemetryForPersistence();
 	setCurrentVideoPath(videoPath);
 	setCurrentProjectPath(null);
-	try {
-		await persistPendingCursorTelemetry(videoPath);
-	} catch (error) {
-		console.warn("[mac-stop] Failed to persist cursor telemetry:", error);
+	// Skip cursor sidecar write when pipeline is the sole sidecar owner
+	// (noCursorTelemetryMode=true). The pipeline writes the synthesized sidecar
+	// after the trace completes, so we must not overwrite it here.
+	if (!noCursorTelemetryMode) {
+		snapshotCursorTelemetryForPersistence();
+		try {
+			await persistPendingCursorTelemetry(videoPath);
+		} catch (error) {
+			console.warn("[mac-stop] Failed to persist cursor telemetry:", error);
+		}
 	}
 	if (isAutoRecordingPath(videoPath)) {
 		await pruneAutoRecordings([videoPath]);

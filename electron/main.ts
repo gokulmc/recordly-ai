@@ -53,9 +53,15 @@ import {
 	setHudOverlayRecordingActive,
 	showUpdateToastWindow,
 } from "./windows";
+import { loadProjectFromPath } from "./ipc/project/manager";
 
 const electronMainDir = path.dirname(fileURLToPath(import.meta.url));
 const IS_SMOKE_EXPORT = process.env.RECORDLY_SMOKE_EXPORT === "1";
+
+// --open-project=<path>: auto-open a .recordly file when the app launches.
+// Used by pipeline/smoke.ts after generating a project to skip File > Open.
+const OPEN_PROJECT_ARG = process.argv.find((a) => a.startsWith("--open-project="));
+const OPEN_PROJECT_PATH = OPEN_PROJECT_ARG?.slice("--open-project=".length) ?? null;
 
 function ignoreBrokenConsolePipe(stream: NodeJS.WritableStream | undefined) {
 	stream?.on("error", (error: NodeJS.ErrnoException) => {
@@ -994,6 +1000,16 @@ app.whenReady().then(async () => {
 
 	createWindow();
 	setupAutoUpdates(getUpdateDialogWindow, sendUpdateToastToWindows);
+
+	if (OPEN_PROJECT_PATH) {
+		// Give the window a moment to finish loading before opening the project.
+		// The IPC handler (`open-project-file-at-path`) is already registered above.
+		setTimeout(() => {
+			void loadProjectFromPath(OPEN_PROJECT_PATH).catch((err: unknown) => {
+				console.error("[main] --open-project failed:", err);
+			});
+		}, 2000);
+	}
 
 	// Register the display media handler so that renderer's getDisplayMedia()
 	// calls land on the pre-selected source without showing a system picker.
