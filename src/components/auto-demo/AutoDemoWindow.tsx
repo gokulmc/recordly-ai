@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { useAutoDemoStore, initialStages } from "./useAutoDemoStore";
 import { Step1Inputs } from "./steps/Step1Inputs";
@@ -28,6 +28,7 @@ const SLIDE_VARIANTS = {
 
 export function AutoDemoWindow() {
   const store = useAutoDemoStore();
+  const [autoExpandAuth, setAutoExpandAuth] = useState(false);
   const {
     step, setStep,
     formValues, updateFormField,
@@ -186,6 +187,7 @@ export function AutoDemoWindow() {
                 stages={stages}
                 logLines={logLines}
                 errorMessage={errorMessage}
+                autoExpandAuth={autoExpandAuth}
                 styles={styles}
               />
             </motion.div>
@@ -207,9 +209,11 @@ export function AutoDemoWindow() {
                 script={script}
                 isRecording={isRecording}
                 isRegenerating={isGenerating}
+                authWarning={Boolean(featureMap?.authNeeded) && !(formValues.authEmail.trim() && formValues.authPassword)}
                 onApprove={() => void handleApproveAndRecord()}
                 onRegenerate={(r) => void handleRegenerate(r)}
                 onBack={() => setStep(1)}
+                onAddCredentials={() => { setAutoExpandAuth(true); setStep(1); }}
                 styles={styles}
               />
             </motion.div>

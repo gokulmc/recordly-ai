@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowLeftIcon, RecordIcon, ArrowsCounterClockwiseIcon } from "@phosphor-icons/react";
+import { ArrowLeftIcon, RecordIcon, ArrowsCounterClockwiseIcon, LockKeyIcon } from "@phosphor-icons/react";
 import { AutoDemoFlowchart } from "../AutoDemoFlowchart";
 import type { AppFeatureMap, RecordingScript } from "../useAutoDemoStore";
 
@@ -8,13 +8,16 @@ interface Props {
   script: RecordingScript;
   isRecording: boolean;
   isRegenerating: boolean;
+  /** App requires login but no demo credentials were entered */
+  authWarning: boolean;
   onApprove: () => void;
   onRegenerate: (refinement: string) => void;
   onBack: () => void;
+  onAddCredentials: () => void;
   styles: Record<string, string>;
 }
 
-export function Step2Script({ featureMap, script, isRecording, isRegenerating, onApprove, onRegenerate, onBack, styles }: Props) {
+export function Step2Script({ featureMap, script, isRecording, isRegenerating, authWarning, onApprove, onRegenerate, onBack, onAddCredentials, styles }: Props) {
   const [refinement, setRefinement] = useState("");
 
   return (
@@ -33,6 +36,36 @@ export function Step2Script({ featureMap, script, isRecording, isRegenerating, o
       </div>
 
       <div style={{ height: 1, background: "var(--launch-border)", flexShrink: 0 }} />
+
+      {/* Auth-needed warning */}
+      {authWarning && (
+        <div style={{
+          flexShrink: 0,
+          margin: "10px 16px 0",
+          padding: "10px 12px",
+          borderRadius: 9,
+          border: "1px solid rgba(234,179,8,0.35)",
+          background: "rgba(234,179,8,0.07)",
+          display: "flex",
+          alignItems: "flex-start",
+          gap: 8,
+        }}>
+          <LockKeyIcon size={15} weight="fill" style={{ color: "#ca8a04", flexShrink: 0, marginTop: 1 }} />
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#92400e" }}>This app needs login to demo</div>
+            <div style={{ fontSize: 12, color: "#92400e", opacity: 0.85, lineHeight: 1.4, marginTop: 2 }}>
+              No demo credentials were entered, so the recording may hit a sign-in wall.
+            </div>
+            <button
+              type="button"
+              onClick={onAddCredentials}
+              style={{ marginTop: 6, fontSize: 12, fontWeight: 600, color: "#92400e", textDecoration: "underline", background: "none", border: "none", padding: 0, cursor: "pointer" }}
+            >
+              ← Add demo credentials
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Flowchart */}
       <div style={{ flex: 1, overflowY: "auto", padding: "10px 12px", minHeight: 0 }}>

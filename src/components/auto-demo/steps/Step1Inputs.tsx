@@ -81,6 +81,8 @@ interface Props {
   stages: StageState[];
   logLines: string[];
   errorMessage: string | null;
+  /** When true, open the demo-credentials section on mount (e.g. app needs login) */
+  autoExpandAuth?: boolean;
   styles: Record<string, string>;
 }
 
@@ -99,10 +101,11 @@ export function Step1Inputs({
   stages,
   logLines,
   errorMessage,
+  autoExpandAuth,
   styles,
 }: Props) {
   const [showRecents, setShowRecents] = useState(false);
-  const [showAuth, setShowAuth] = useState(false);
+  const [showAuth, setShowAuth] = useState(Boolean(autoExpandAuth));
   const [checkingRepo, setCheckingRepo] = useState(false);
   const recentsRef = useRef<HTMLDivElement>(null);
 
