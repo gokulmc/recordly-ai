@@ -36,6 +36,7 @@ import {
 	captureBeaconClock,
 } from "./syncBeacon.js";
 import {
+	ACTION_TIMEOUT_MS,
 	traceClick,
 	traceDblClick,
 	traceFill,
@@ -424,7 +425,7 @@ async function executeStep(
 		case "type": {
 			if (!step.selector) throw new Error("type step requires a selector");
 			try {
-				await page.type(step.selector, step.value ?? "");
+				await page.locator(step.selector).first().pressSequentially(step.value ?? "", { timeout: ACTION_TIMEOUT_MS });
 			} catch (err) {
 				console.warn(`  [recorder] type "${step.selector}" failed, skipping: ${String(err).split("\n")[0]}`);
 			}

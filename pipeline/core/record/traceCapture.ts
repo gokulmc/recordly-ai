@@ -12,15 +12,89 @@
  */
 
 import { performance } from "node:perf_hooks";
-import type { Page } from "playwright";
+import type { Locator, Page } from "playwright";
 import type { InteractionEvent, InteractionTrace } from "../schema/interactionTrace.js";
 import { captureElementInfo, capturePageContext } from "./domCapture.js";
 import { perfNowToEventTms } from "./syncBeacon.js";
+
+/**
+ * Per-action wait budget. Kept short so a missed selector does not dead-air the
+ * recording for the full Playwright default (30s). One bad step then costs a
+ * couple of seconds, not half a minute.
+ */
+export const ACTION_TIMEOUT_MS = 7000;
+const FALLBACK_TIMEOUT_MS = 1500;
 
 function currentSegment(trace: InteractionTrace) {
 	const seg = trace.segments[trace.segments.length - 1];
 	if (!seg) throw new Error("No calibration segment on trace — inject a beacon first");
 	return seg;
+}
+
+/** Pull the quoted text out of a text/has-text style selector, if present. */
+function extractSelectorText(selector: string): string | null {
+	const m =
+		selector.match(/has-text\(\s*["'](.+?)["']\s*\)/i) ??
+		selector.match(/:text(?:-is)?\(\s*["'](.+?)["']\s*\)/i) ??
+		selector.match(/^text=["']?(.+?)["']?$/i);
+	return m?.[1]?.trim() ?? null;
+}
+
+/**
+ * Derive looser fallback selectors from a primary one. The script generator and
+ * crawl often emit over-specific text selectors (full sentence, exact casing)
+ * that miss the live DOM; these variants recover most of them.
+ */
+function fallbackSelectors(selector: string): string[] {
+	const text = extractSelectorText(selector);
+	if (!text) return [];
+	const variants = new Set<string>();
+	// case-insensitive substring match on the full text
+	variants.add(`text=${text}`);
+	// role-scoped variants
+	variants.add(`button:has-text("${text}")`);
+	variants.add(`a:has-text("${text}")`);
+	// first few words, for when the full string is too specific
+	const short = text.split(/\s+/).slice(0, 4).join(" ");
+	if (short && short !== text) {
+		variants.add(`:text("${short}")`);
+		variants.add(`text=${short}`);
+	}
+	variants.delete(selector);
+	return [...variants];
+}
+
+async function firstVisible(page: Page, selector: string, timeoutMs: number): Promise<Locator | null> {
+	const loc = page.locator(selector).first();
+	try {
+		await loc.waitFor({ state: "visible", timeout: timeoutMs });
+		return loc;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Resolve a selector to a visible locator, trying the primary selector first
+ * (short timeout) and then derived fallbacks. Returns the locator AND the
+ * selector that actually matched (so DOM facts can be captured from it).
+ */
+export async function resolveAction(
+	page: Page,
+	selector: string,
+	timeoutMs = ACTION_TIMEOUT_MS,
+): Promise<{ locator: Locator; selector: string } | null> {
+	const primary = await firstVisible(page, selector, timeoutMs);
+	if (primary) return { locator: primary, selector };
+
+	for (const fb of fallbackSelectors(selector)) {
+		const loc = await firstVisible(page, fb, FALLBACK_TIMEOUT_MS);
+		if (loc) {
+			console.log(`  [recorder] selector fallback: "${selector}" → "${fb}"`);
+			return { locator: loc, selector: fb };
+		}
+	}
+	return null;
 }
 
 /**
@@ -61,9 +135,12 @@ export async function traceClick(
 	selector: string,
 ): Promise<void> {
 	const seg = currentSegment(trace);
-	await page.click(selector);
+	const resolved = await resolveAction(page, selector);
+	if (!resolved) throw new Error(`no visible element for selector ${selector}`);
+	await resolved.locator.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+	await resolved.locator.click({ timeout: ACTION_TIMEOUT_MS });
 	const tMs = perfNowToEventTms(performance.now(), seg);
-	const info = await captureElementInfo(page, selector);
+	const info = await captureElementInfo(page, resolved.selector);
 	if (!info) return;
 
 	const ctx = await capturePageContext(page);
@@ -97,9 +174,12 @@ export async function traceDblClick(
 	selector: string,
 ): Promise<void> {
 	const seg = currentSegment(trace);
-	await page.dblclick(selector);
+	const resolved = await resolveAction(page, selector);
+	if (!resolved) throw new Error(`no visible element for selector ${selector}`);
+	await resolved.locator.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+	await resolved.locator.dblclick({ timeout: ACTION_TIMEOUT_MS });
 	const tMs = perfNowToEventTms(performance.now(), seg);
-	const info = await captureElementInfo(page, selector);
+	const info = await captureElementInfo(page, resolved.selector);
 	if (!info) return;
 
 	const ctx = await capturePageContext(page);
@@ -130,9 +210,12 @@ export async function traceFill(
 	value: string,
 ): Promise<void> {
 	const seg = currentSegment(trace);
-	await page.fill(selector, value);
+	const resolved = await resolveAction(page, selector);
+	if (!resolved) throw new Error(`no visible element for selector ${selector}`);
+	await resolved.locator.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+	await resolved.locator.fill(value, { timeout: ACTION_TIMEOUT_MS });
 	const tMs = perfNowToEventTms(performance.now(), seg);
-	const info = await captureElementInfo(page, selector);
+	const info = await captureElementInfo(page, resolved.selector);
 	if (!info) return;
 
 	const ctx = await capturePageContext(page);
@@ -163,9 +246,12 @@ export async function traceHover(
 	selector: string,
 ): Promise<void> {
 	const seg = currentSegment(trace);
-	await page.hover(selector);
+	const resolved = await resolveAction(page, selector);
+	if (!resolved) throw new Error(`no visible element for selector ${selector}`);
+	await resolved.locator.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+	await resolved.locator.hover({ timeout: ACTION_TIMEOUT_MS });
 	const tMs = perfNowToEventTms(performance.now(), seg);
-	const info = await captureElementInfo(page, selector);
+	const info = await captureElementInfo(page, resolved.selector);
 	if (!info) return;
 
 	const ctx = await capturePageContext(page);

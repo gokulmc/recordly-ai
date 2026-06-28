@@ -115,11 +115,25 @@ async function crawlFeaturePage(
     } catch { /* invalid selector */ }
   }
 
-  // Add discovered elements as candidate selectors
-  const discoveredSelectors = elements
-    .filter((e) => e.label)
+  // Rank discovered elements by relevance to THIS feature so each feature gets
+  // distinct, meaningful selectors instead of the same generic top-of-page
+  // buttons (all features share entryPath "/", so the raw element list is
+  // identical for every one of them).
+  const keywords = [feature.name, feature.description, ...(feature.suggestedFlow ?? [])]
+    .join(" ")
+    .toLowerCase()
+    .match(/[a-z]{4,}/g) ?? [];
+  const labelled = elements.filter((e) => e.label);
+  const discoveredSelectors = labelled
+    .map((e, i) => {
+      const label = (e.label ?? "").toLowerCase();
+      const score = keywords.reduce((s, k) => (label.includes(k) ? s + 1 : s), 0);
+      return { e, score, i };
+    })
+    // higher relevance first; preserve original order for ties
+    .sort((a, b) => b.score - a.score || a.i - b.i)
     .slice(0, 5)
-    .map((e) => (e.label ? `${e.tag}:has-text("${e.label.slice(0, 40)}")` : e.selector));
+    .map(({ e }) => `${e.tag}:has-text("${e.label!.slice(0, 40)}")`);
 
   const updatedFeature: AppFeature = {
     ...feature,
