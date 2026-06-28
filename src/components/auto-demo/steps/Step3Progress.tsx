@@ -1,14 +1,18 @@
+import { useState, useEffect, useRef } from "react";
 import {
   CheckCircleIcon,
   CircleNotchIcon,
   WarningCircleIcon,
   XCircleIcon,
   FolderOpenIcon,
+  CaretDownIcon,
+  CaretRightIcon,
 } from "@phosphor-icons/react";
 import type { StageState } from "../useAutoDemoStore";
 
 interface Props {
   stages: StageState[];
+  logLines: string[];
   errorMessage: string | null;
   projectPath: string | null;
   isRunning: boolean;
@@ -24,8 +28,14 @@ function StageIcon({ status }: { status: StageState["status"] }) {
   return <span style={{ width: 15, height: 15, borderRadius: "50%", border: "1.5px solid var(--launch-border-strong)", display: "inline-block", flexShrink: 0 }} />;
 }
 
-export function Step3Progress({ stages, errorMessage, projectPath, isRunning, onCancel, onOpenProject, styles: _styles }: Props) {
+export function Step3Progress({ stages, logLines, errorMessage, projectPath, isRunning, onCancel, onOpenProject, styles: _styles }: Props) {
   const isDone = stages.some((s) => s.id === "done" && s.status === "done");
+  const [showLog, setShowLog] = useState(false);
+  const logRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (showLog && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [logLines, showLog]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -84,6 +94,54 @@ export function Step3Progress({ stages, errorMessage, projectPath, isRunning, on
             <p style={{ fontSize: 12, color: "#991b1b", margin: 0, lineHeight: 1.4 }}>{errorMessage}</p>
           </div>
         )}
+
+        {/* Verbose log (collapsible) */}
+        <div style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            onClick={() => setShowLog((v) => !v)}
+            style={{
+              display: "flex", alignItems: "center", gap: 5, padding: "4px 6px",
+              background: "none", border: "none", cursor: "pointer",
+              fontSize: 12, fontWeight: 500, color: "var(--launch-label)",
+            }}
+          >
+            {showLog ? <CaretDownIcon size={12} weight="bold" /> : <CaretRightIcon size={12} weight="bold" />}
+            Verbose log{logLines.length ? ` (${logLines.length})` : ""}
+          </button>
+          {showLog && (
+            <div
+              ref={logRef}
+              style={{
+                marginTop: 4,
+                height: 180,
+                overflowY: "auto",
+                padding: "8px 10px",
+                borderRadius: 9,
+                border: "1px solid var(--launch-border)",
+                background: "var(--launch-panel)",
+                display: "flex",
+                flexDirection: "column",
+                gap: 1,
+              }}
+            >
+              {logLines.length === 0 ? (
+                <span style={{ fontSize: 12, color: "var(--launch-label)", fontStyle: "italic", fontFamily: "monospace" }}>No output yet…</span>
+              ) : (
+                logLines.map((line, i) => (
+                  <div key={i} style={{
+                    fontSize: 11.5,
+                    lineHeight: 1.55,
+                    color: i === logLines.length - 1 ? "var(--launch-text)" : "var(--launch-text-muted)",
+                    fontFamily: "'Roboto Mono', 'SF Mono', monospace",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}>{line}</div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Footer action */}

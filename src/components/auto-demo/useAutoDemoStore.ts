@@ -81,6 +81,20 @@ export function initialStages(): StageState[] {
   return STAGE_ORDER.map((s) => ({ ...s, status: "pending" as StageStatus, message: "" }));
 }
 
+/**
+ * Stage list for the render phase (after the user approves the recording).
+ * The pre-render stages (read/crawl/script/record) already happened, so show
+ * them done rather than resetting the whole list to pending.
+ */
+const PRE_RENDER_STAGES = new Set<StageId>(["ingest", "crawl", "script", "record"]);
+export function renderStartStages(): StageState[] {
+  return STAGE_ORDER.map((s) => ({
+    ...s,
+    status: (PRE_RENDER_STAGES.has(s.id) ? "done" : "pending") as StageStatus,
+    message: PRE_RENDER_STAGES.has(s.id) ? "Done" : "",
+  }));
+}
+
 function generateId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
@@ -254,7 +268,7 @@ export function useAutoDemoStore() {
       } else if (decision === "approve") {
         setIsRendering(true);
         setStep(3);
-        setStages(initialStages());
+        setStages(renderStartStages());
       }
     });
     return () => remove?.();

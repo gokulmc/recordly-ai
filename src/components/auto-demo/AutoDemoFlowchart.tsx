@@ -146,6 +146,27 @@ export function AutoDemoFlowchart({ featureMap, script }: Props) {
   const [expandedFeature, setExpandedFeature] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"flow" | "list">("flow");
 
+  // Detect a leading sign-in sequence (deterministic login prepended to the
+  // script) and surface it as a node so the user sees login IS in the flow.
+  const loginSteps = script.steps.filter(
+    (s) => /password|email|username/i.test(s.selector ?? "") || /sign(ing)?\s*in|log(ging)?\s*in/i.test(s.narration ?? ""),
+  );
+  const hasLogin = script.steps.some((s) => /password/i.test(s.selector ?? ""));
+
+  // Synthetic feature node for the sign-in step.
+  const loginNode: AppFeatureMap["features"][0] | null = hasLogin
+    ? {
+        name: "Sign in",
+        emoji: "🔐",
+        description: "Authenticate before demoing the app",
+        entryPath: "/login",
+        importance: 5,
+        suggestedFlow: loginSteps.map((s) => s.narration ?? s.action),
+      }
+    : null;
+
+  const flowNodes = loginNode ? [loginNode, ...featureMap.features] : featureMap.features;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {/* Toggle + meta */}
@@ -181,14 +202,14 @@ export function AutoDemoFlowchart({ featureMap, script }: Props) {
           <motion.div key="flow" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.1 }}>
             {/* Top-down vertical flow */}
             <div style={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: 0 }}>
-              {featureMap.features.map((feature, idx) => (
+              {flowNodes.map((feature, idx) => (
                 <div key={feature.name} style={{ display: "flex", flexDirection: "column", alignItems: "stretch" }}>
                   <FeatureNode
                     feature={feature}
                     isExpanded={expandedFeature === feature.name}
                     onClick={() => setExpandedFeature(expandedFeature === feature.name ? null : feature.name)}
                   />
-                  {idx < featureMap.features.length - 1 && (
+                  {idx < flowNodes.length - 1 && (
                     <div style={{ display: "flex", justifyContent: "center", padding: "3px 0" }}>
                       <ArrowDownIcon size={14} style={{ color: "var(--launch-border-strong)" }} weight="bold" />
                     </div>

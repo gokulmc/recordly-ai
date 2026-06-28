@@ -134,8 +134,14 @@ export function AutoDemoWindow() {
     reset();
   };
 
-  const handleOpenProject = () => {
-    if (projectPath) window.electronAPI?.openProjectFileAtPath?.(projectPath);
+  const handleOpenProject = async () => {
+    if (!projectPath) return;
+    const result = await window.electronAPI?.openProjectFileAtPath?.(projectPath);
+    if (result?.success) {
+      await window.electronAPI?.switchToEditor?.();
+    } else {
+      console.error("[AutoDemoWindow] open project failed:", result?.message);
+    }
   };
 
   const isRunning = isGenerating || isRecording || isRendering;
@@ -214,7 +220,6 @@ export function AutoDemoWindow() {
                 onRegenerate={(r) => void handleRegenerate(r)}
                 onBack={() => setStep(1)}
                 onAddCredentials={() => { setAutoExpandAuth(true); setStep(1); }}
-                styles={styles}
               />
             </motion.div>
           )}
@@ -232,11 +237,12 @@ export function AutoDemoWindow() {
             >
               <Step3Progress
                 stages={stages}
+                logLines={logLines}
                 errorMessage={errorMessage}
                 projectPath={projectPath}
                 isRunning={isRunning}
                 onCancel={() => void handleCancel()}
-                onOpenProject={handleOpenProject}
+                onOpenProject={() => void handleOpenProject()}
                 styles={styles}
               />
             </motion.div>

@@ -14,10 +14,9 @@ interface Props {
   onRegenerate: (refinement: string) => void;
   onBack: () => void;
   onAddCredentials: () => void;
-  styles: Record<string, string>;
 }
 
-export function Step2Script({ featureMap, script, isRecording, isRegenerating, authWarning, onApprove, onRegenerate, onBack, onAddCredentials, styles }: Props) {
+export function Step2Script({ featureMap, script, isRecording, isRegenerating, authWarning, onApprove, onRegenerate, onBack, onAddCredentials }: Props) {
   const [refinement, setRefinement] = useState("");
 
   return (
@@ -98,70 +97,61 @@ export function Step2Script({ featureMap, script, isRecording, isRegenerating, a
           }}
         />
 
-        <div style={{ display: "flex", gap: 8 }}>
-          <button
-            type="button"
-            onClick={() => { onRegenerate(refinement); setRefinement(""); }}
-            disabled={!refinement.trim() || isRecording || isRegenerating}
-            className={styles.ddItem}
-            style={{
-              flex: 1,
-              justifyContent: "center",
-              borderRadius: 10,
-              border: "1px solid var(--launch-border)",
-              height: 40,
-              fontSize: 14,
-              fontWeight: 500,
-              opacity: (!refinement.trim() || isRecording || isRegenerating) ? 0.45 : 1,
-            }}
-          >
-            {isRegenerating ? (
-              <>
-                <span style={{ width: 12, height: 12, borderRadius: "50%", border: "2px solid rgba(0,0,0,0.2)", borderTopColor: "var(--launch-accent)", display: "inline-block", animation: "spin 0.7s linear infinite", marginRight: 5 }} />
-                Regenerating…
-              </>
-            ) : (
-              <>
-                <ArrowsCounterClockwiseIcon size={14} style={{ marginRight: 5 }} />
-                Regenerate
-              </>
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={onApprove}
-            disabled={isRecording || isRegenerating}
-            style={{
-              flex: 1,
-              height: 40,
-              borderRadius: 10,
-              border: "none",
-              background: "var(--launch-accent)",
-              color: "#fff",
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: (isRecording || isRegenerating) ? "default" : "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 6,
-              opacity: (isRecording || isRegenerating) ? 0.6 : 1,
-            }}
-          >
-            {isRecording ? (
-              <>
-                <span style={{ width: 12, height: 12, borderRadius: "50%", border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", display: "inline-block", animation: "spin 0.7s linear infinite" }} />
-                Recording…
-              </>
-            ) : (
-              <>
-                <RecordIcon size={14} weight="fill" />
-                Approve & Record
-              </>
-            )}
-          </button>
-        </div>
+        {/* Single CTA: becomes Regenerate when the refine box has text,
+            otherwise Approve & Record. */}
+        {(() => {
+          const wantsRegenerate = refinement.trim().length > 0;
+          const busy = isRecording || isRegenerating;
+          const onClick = wantsRegenerate
+            ? () => { onRegenerate(refinement); setRefinement(""); }
+            : onApprove;
+          return (
+            <button
+              type="button"
+              onClick={onClick}
+              disabled={busy}
+              style={{
+                width: "100%",
+                height: 42,
+                borderRadius: 10,
+                border: "none",
+                background: wantsRegenerate ? "var(--launch-text)" : "var(--launch-accent)",
+                color: "#fff",
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: busy ? "default" : "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+                opacity: busy ? 0.6 : 1,
+                transition: "background 0.15s",
+              }}
+            >
+              {isRegenerating ? (
+                <>
+                  <span style={{ width: 13, height: 13, borderRadius: "50%", border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", display: "inline-block", animation: "spin 0.7s linear infinite" }} />
+                  Regenerating…
+                </>
+              ) : isRecording ? (
+                <>
+                  <span style={{ width: 13, height: 13, borderRadius: "50%", border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", display: "inline-block", animation: "spin 0.7s linear infinite" }} />
+                  Recording…
+                </>
+              ) : wantsRegenerate ? (
+                <>
+                  <ArrowsCounterClockwiseIcon size={15} weight="bold" />
+                  Regenerate with changes
+                </>
+              ) : (
+                <>
+                  <RecordIcon size={15} weight="fill" />
+                  Approve & Record
+                </>
+              )}
+            </button>
+          );
+        })()}
       </div>
     </div>
   );
