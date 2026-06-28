@@ -77,13 +77,25 @@ async function crawlFeaturePage(
 
       const label = ariaLabel ?? placeholder ?? text ?? undefined;
 
-      // Build a selector in priority: testId > id > role+label > tag+text
+      // Build a selector in priority: testId > id > type-appropriate match.
+      // Inputs/textareas/selects have NO text content, so `:has-text` never
+      // matches them — use placeholder/aria-label attribute selectors instead.
+      const isField = tag === "input" || tag === "textarea" || tag === "select";
       let selector: string;
       if (testId) {
         selector = `[data-testid="${testId}"]`;
       } else if (id) {
         selector = id;
-      } else if (role && label) {
+      } else if (isField) {
+        if (placeholder) selector = `${tag}[placeholder="${placeholder.slice(0, 40)}"]`;
+        else if (ariaLabel) selector = `${tag}[aria-label="${ariaLabel.slice(0, 40)}"]`;
+        else if (role) selector = `[role="${role}"]`;
+        else selector = tag;
+      } else if (text) {
+        selector = `${tag}:has-text("${text.slice(0, 40)}")`;
+      } else if (ariaLabel) {
+        selector = `${tag}[aria-label="${ariaLabel.slice(0, 40)}"]`;
+      } else if (role) {
         selector = `[role="${role}"]`;
       } else {
         selector = tag;
@@ -133,7 +145,7 @@ async function crawlFeaturePage(
     // higher relevance first; preserve original order for ties
     .sort((a, b) => b.score - a.score || a.i - b.i)
     .slice(0, 5)
-    .map(({ e }) => `${e.tag}:has-text("${e.label!.slice(0, 40)}")`);
+    .map(({ e }) => e.selector);
 
   const updatedFeature: AppFeature = {
     ...feature,

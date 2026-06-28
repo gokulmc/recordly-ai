@@ -88,7 +88,7 @@ ${featureSummary}
 Generate a demo script that:
 1. Starts at the production URL (navigate step)
 2. Demonstrates 2-3 of the top features in a logical order
-3. Uses the EXACT selectors from live DOM (listed above); fall back to role-based selectors if needed
+3. CRITICAL: use ONLY selectors copied verbatim from the "Selectors (from live DOM)" lists above. Do NOT invent selectors or guess element text. If a feature lists no usable selector, demonstrate it with a navigate/scroll/wait step and narration instead of clicking. A wrong selector wastes the whole step.
 4. Includes natural pacing: wait 1-2s after navigating, 300-500ms after clicking
 5. Each meaningful interaction has a narration string (what the viewer would understand)
 6. Total duration: ~30-60 seconds of interactions (not counting waits between features)
