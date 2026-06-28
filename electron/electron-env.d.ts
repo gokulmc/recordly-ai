@@ -939,6 +939,7 @@ interface Window {
 		) => Promise<{ success: boolean; error?: string }>;
 
 		// ── Auto Demo ──────────────────────────────────────────────────────
+		openAutoDemoWindow: () => Promise<{ success: boolean }>;
 		autoDemoStart: (opts: {
 			repoUrl: string;
 			productionUrl: string;
@@ -955,6 +956,37 @@ interface Window {
 				payload?: unknown;
 			}) => void,
 		) => () => void;
+
+		// ── Auto Demo — Granular Handlers ─────────────────────────────────
+		autoDemoCheckRepo: (url: string) => Promise<{ accessible: boolean; needsPat: boolean }>;
+		autoDemoGenerateScript: (opts: {
+			repoUrl: string;
+			productionUrl: string;
+			authEmail?: string;
+			authPassword?: string;
+			focusArea?: string;
+		}) => Promise<{ success: boolean }>;
+		autoDemoRecord: (opts: {
+			scriptJson: string;
+			outDir?: string;
+		}) => Promise<{ success: boolean }>;
+		autoDemoRender: (opts: {
+			videoPath: string;
+			traceJsonPath: string;
+			productionUrl?: string;
+			outDir?: string;
+		}) => Promise<{ success: boolean }>;
+		onAutoDemoPhaseResult: (
+			callback: (result: unknown) => void,
+		) => () => void;
+
+		// ── Video Review Window ───────────────────────────────────────────
+		openVideoReview: (videoPath: string) => Promise<void>;
+		closeVideoReview: () => Promise<void>;
+		onVideoReviewDecision: (
+			callback: (decision: "approve" | "modify") => void,
+		) => () => void;
+		sendVideoReviewDecision: (decision: "approve" | "modify") => void;
 	};
 }
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { AutoDemoWindow } from "./components/auto-demo/AutoDemoWindow";
+import { VideoReviewWindow } from "./components/auto-demo/VideoReviewWindow";
 import { CountdownOverlay } from "./components/countdown/CountdownOverlay";
 import { LaunchWindow } from "./components/launch/LaunchWindow";
 import { SourceSelector } from "./components/launch/SourceSelector";
@@ -80,6 +81,11 @@ export default function App() {
 			);
 		case "auto-demo":
 			return <AutoDemoWindow />;
+		case "video-review": {
+			const params = new URLSearchParams(window.location.search);
+			const videoPath = params.get("videoPath") ?? "";
+			return <VideoReviewWindow videoPath={videoPath} />;
+		}
 		default:
 			return (
 				<div className="flex h-full w-full items-center justify-center bg-editor-bg text-foreground">

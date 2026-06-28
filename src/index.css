@@ -1,3 +1,5 @@
+@import url("https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;600;700&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -29,7 +31,7 @@
 	}
 
 	:root {
-		--app-font-sans: "SF Pro Display", "SF Pro Text", Helvetica, sans-serif;
+		--app-font-sans: "Roboto", "SF Pro Display", "SF Pro Text", Helvetica, sans-serif;
 		--brand-accent: #2563eb;
 		--brand-accent-rgb: 37, 99, 235;
 		--background: 0 0% 100%;

@@ -6,6 +6,7 @@ import {
 	MicrophoneSlashIcon,
 	MinusIcon,
 	MonitorIcon,
+	RocketLaunchIcon,
 	TimerIcon,
 	VideoCameraIcon,
 	VideoCameraSlashIcon,
@@ -210,6 +211,7 @@ function LaunchWindowContent() {
 		/>
 	);
 
+
 	const idleControls = (
 		<>
 			{platform !== "linux" && (
@@ -350,6 +352,18 @@ function LaunchWindowContent() {
 			>
 				<div className={styles.recDot} />
 			</button>
+
+			<Button
+				variant="ghost"
+				size="icon"
+				iconSize="lg"
+				title="Auto Demo"
+				className={`${styles.electronNoDrag}`}
+				style={{ color: '#f97316', opacity: 0.75 }}
+				onClick={() => { void window.electronAPI?.openAutoDemoWindow?.(); }}
+			>
+				<RocketLaunchIcon size={18} />
+			</Button>
 
 			<Separator orientation="vertical" className="mx-[5px] h-6" />
 

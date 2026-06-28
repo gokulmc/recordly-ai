@@ -34,8 +34,11 @@
  */
 
 import { fork } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { desktopCapturer, ipcMain, type WebContents } from "electron";
+import { openVideoReviewWindow, closeVideoReviewWindow, getHudOverlayWindow, createAutoDemoWindow } from "../../windows";
 import {
 	nativeScreenRecordingActive,
 	setNoCursorTelemetryMode,
@@ -160,6 +163,57 @@ interface ActivePipeline {
 
 let activePipeline: ActivePipeline | null = null;
 
+// ── Pipeline CLI resolution (dev vs prod) ─────────────────────────────────────
+
+interface PipelineForkTarget {
+	modulePath: string;
+	/** Node-compatible executable to run the child with. */
+	execPath: string;
+	/** Extra Node flags (e.g. the tsx ESM loader for running .ts directly). */
+	execArgv: string[];
+	/** Env additions required by the chosen executable. */
+	extraEnv: Record<string, string>;
+}
+
+/**
+ * Resolve how to fork the pipeline child.
+ *
+ * Always runs through Electron's OWN bundled Node (`process.execPath` +
+ * `ELECTRON_RUN_AS_NODE`). This avoids any dependency on a system `node` being
+ * present on `PATH` — which it usually is NOT when the app is launched from the
+ * GUI/IDE. (tsx's `#!/usr/bin/env node` shebang fails with exit 127 in that
+ * case, killing the child before it can emit a single event.)
+ *
+ *   - Prod: run the precompiled `pipeline/dist/cli.js` directly.
+ *   - Dev:  run `pipeline/cli.ts` with the tsx ESM loader via `--import`.
+ */
+function resolvePipelineForkTarget(): PipelineForkTarget {
+	const pipelineRoot = path.resolve(__dirname, "../../../pipeline");
+	const baseEnv = { ELECTRON_RUN_AS_NODE: "1" };
+
+	const compiledCli = path.join(pipelineRoot, "dist/cli.js");
+	if (fs.existsSync(compiledCli)) {
+		return {
+			modulePath: compiledCli,
+			execPath: process.execPath,
+			execArgv: [],
+			extraEnv: baseEnv,
+		};
+	}
+
+	// Dev: run the TypeScript source directly via the tsx loader.
+	const tsxLoader = path.join(pipelineRoot, "node_modules/tsx/dist/loader.mjs");
+	const execArgv = fs.existsSync(tsxLoader)
+		? ["--import", pathToFileURL(tsxLoader).href]
+		: [];
+	return {
+		modulePath: path.join(pipelineRoot, "cli.ts"),
+		execPath: process.execPath,
+		execArgv,
+		extraEnv: baseEnv,
+	};
+}
+
 /**
  * Fork the pipeline child and wire up the IPC bridge.
  *
@@ -176,16 +230,21 @@ export function forkPipelineChild(
 		activePipeline = null;
 	}
 
-	const pipelineCliPath = path.resolve(__dirname, "../../../pipeline/dist/cli.js");
+	const { modulePath: pipelineCliPath, execPath, execArgv, extraEnv } = resolvePipelineForkTarget();
+	const pipelineRoot = path.resolve(__dirname, "../../../pipeline");
 
 	const child = fork(pipelineCliPath, [], {
+		cwd: pipelineRoot,
 		env: {
 			...process.env,
+			...extraEnv,
 			PIPELINE_REPO_URL: opts.repoUrl,
 			PIPELINE_PRODUCTION_URL: opts.productionUrl,
 			PIPELINE_AUTH_EMAIL: opts.authEmail ?? "",
 			PIPELINE_AUTH_PASSWORD: opts.authPassword ?? "",
 		},
+		execPath,
+		execArgv,
 		silent: false,
 	});
 
@@ -235,14 +294,108 @@ export function forkPipelineChild(
 
 // ── IPC registration ──────────────────────────────────────────────────────────
 
+// ── Granular phase IPC handlers ───────────────────────────────────────────────
+
+function forkPhasedChild(
+	phase: string,
+	env: Record<string, string>,
+	rendererContents: WebContents,
+): void {
+	if (activePipeline) {
+		activePipeline.child.kill();
+		activePipeline = null;
+	}
+
+	const { modulePath: pipelineCliPath, execPath, execArgv, extraEnv } = resolvePipelineForkTarget();
+	const pipelineRoot = path.resolve(__dirname, "../../../pipeline");
+
+	const relay = (msg: unknown) => {
+		if (!rendererContents.isDestroyed()) {
+			rendererContents.send("auto-demo:progress", msg);
+		}
+	};
+
+	// Surface the first heartbeat immediately so the UI leaves "Initialising…"
+	relay({ type: "stage", stageId: "ingest", status: "running", message: "Starting pipeline …" });
+
+	let child: ReturnType<typeof fork>;
+	try {
+		child = fork(pipelineCliPath, [], {
+			cwd: pipelineRoot,
+			env: { ...process.env, ...extraEnv, PIPELINE_PHASE: phase, ...env },
+			execPath,
+			execArgv,
+			// Capture stderr so we can report crashes; keep an IPC channel.
+			stdio: ["ignore", "pipe", "pipe", "ipc"],
+		});
+	} catch (err) {
+		relay({ type: "stage", stageId: "error", status: "error", message: `Failed to start pipeline: ${String(err)}`, payload: { kind: "error", error: String(err) } });
+		return;
+	}
+
+	activePipeline = { child, rendererContents };
+
+	let sawPhaseResult = false;
+	let stderrTail = "";
+
+	child.stdout?.on("data", (buf: Buffer) => {
+		// Plain progress logs from the pipeline ([ingest] …); useful for the log box.
+		const text = buf.toString();
+		for (const line of text.split("\n")) {
+			const trimmed = line.trim();
+			if (trimmed) relay({ type: "stage", stageId: phase, status: "running", message: trimmed });
+		}
+	});
+
+	child.stderr?.on("data", (buf: Buffer) => {
+		const text = buf.toString();
+		stderrTail = (stderrTail + text).slice(-4000);
+		console.error("[auto-demo pipeline]", text);
+	});
+
+	child.on("error", (err) => {
+		relay({ type: "stage", stageId: "error", status: "error", message: `Pipeline process error: ${err.message}`, payload: { kind: "error", error: err.message } });
+	});
+
+	child.on("message", (msg: unknown) => {
+		if (!msg || typeof msg !== "object") return;
+		const m = msg as Record<string, unknown>;
+
+		if (m["type"] === "phase-result") {
+			sawPhaseResult = true;
+			if (!rendererContents.isDestroyed()) {
+				rendererContents.send("auto-demo:phase-result", m["result"]);
+			}
+			return;
+		}
+
+		relay(msg);
+	});
+
+	child.once("exit", (code) => {
+		if (activePipeline?.child === child) {
+			activePipeline = null;
+		}
+		// If the child died without delivering a result, surface why.
+		if (!sawPhaseResult && code !== 0) {
+			const detail = stderrTail.trim().split("\n").slice(-6).join("\n") || `exit code ${code}`;
+			relay({ type: "stage", stageId: "error", status: "error", message: `Pipeline exited early:\n${detail}`, payload: { kind: "error", error: detail } });
+		}
+	});
+}
+
 /**
  * Register all auto-demo IPC handlers.
  * Call this from `electron/main.ts` alongside other `registerXxxHandlers()` calls.
  */
 export function registerAutoDemoHandlers(): void {
+	ipcMain.handle("auto-demo:open-window", () => {
+		createAutoDemoWindow();
+		return { success: true };
+	});
+
 	ipcMain.handle(
 		"auto-demo:start",
-		// event.sender is WebContents — the renderer that called invoke()
 		(event: { sender: WebContents }, opts: AutoDemoStartOpts) => {
 			forkPipelineChild(opts, event.sender);
 			return { success: true };
@@ -255,5 +408,101 @@ export function registerAutoDemoHandlers(): void {
 			activePipeline = null;
 		}
 		return { success: true };
+	});
+
+	// Check repo accessibility
+	ipcMain.handle("auto-demo:check-repo", (_event, url: string) => {
+		if (!url || url.startsWith("/") || url.startsWith("~")) {
+			return { accessible: true, needsPat: false };
+		}
+		try {
+			const { execSync } = require("node:child_process") as typeof import("node:child_process");
+			execSync(`git ls-remote --exit-code "${url}"`, { timeout: 8000, stdio: "pipe" });
+			return { accessible: true, needsPat: false };
+		} catch {
+			return { accessible: false, needsPat: true };
+		}
+	});
+
+	// Generate script phase
+	ipcMain.handle(
+		"auto-demo:generate-script",
+		(event: { sender: WebContents }, opts: {
+			repoUrl: string;
+			productionUrl: string;
+			authEmail?: string;
+			authPassword?: string;
+			focusArea?: string;
+		}) => {
+			forkPhasedChild(
+				"generate-script",
+				{
+					PIPELINE_REPO_URL: opts.repoUrl,
+					PIPELINE_PRODUCTION_URL: opts.productionUrl,
+					...(opts.authEmail ? { PIPELINE_AUTH_EMAIL: opts.authEmail } : {}),
+					...(opts.authPassword ? { PIPELINE_AUTH_PASSWORD: opts.authPassword } : {}),
+					...(opts.focusArea ? { PIPELINE_FOCUS_AREA: opts.focusArea } : {}),
+				},
+				event.sender,
+			);
+			return { success: true };
+		},
+	);
+
+	// Record phase
+	ipcMain.handle(
+		"auto-demo:record",
+		(event: { sender: WebContents }, opts: { scriptJson: string; outDir?: string }) => {
+			forkPhasedChild(
+				"record",
+				{
+					PIPELINE_SCRIPT_JSON: opts.scriptJson,
+					...(opts.outDir ? { PIPELINE_OUT_DIR: opts.outDir } : {}),
+				},
+				event.sender,
+			);
+			return { success: true };
+		},
+	);
+
+	// Render phase
+	ipcMain.handle(
+		"auto-demo:render",
+		(event: { sender: WebContents }, opts: {
+			videoPath: string;
+			traceJsonPath: string;
+			productionUrl?: string;
+			outDir?: string;
+		}) => {
+			forkPhasedChild(
+				"render",
+				{
+					PIPELINE_VIDEO_PATH: opts.videoPath,
+					PIPELINE_TRACE_JSON_PATH: opts.traceJsonPath,
+					...(opts.productionUrl ? { PIPELINE_PRODUCTION_URL: opts.productionUrl } : {}),
+					...(opts.outDir ? { PIPELINE_OUT_DIR: opts.outDir } : {}),
+				},
+				event.sender,
+			);
+			return { success: true };
+		},
+	);
+
+	// Video review window
+	ipcMain.handle("video-review:open", (_event, videoPath: string) => {
+		openVideoReviewWindow(videoPath);
+	});
+
+	ipcMain.handle("video-review:close", () => {
+		closeVideoReviewWindow();
+	});
+
+	// User decision from the video-review window — relay to the HUD overlay
+	ipcMain.on("video-review:user-decision", (_event, decision: "approve" | "modify") => {
+		closeVideoReviewWindow();
+		const hud = getHudOverlayWindow();
+		if (hud && !hud.isDestroyed()) {
+			hud.webContents.send("video-review:decision", decision);
+		}
 	});
 }

@@ -1,24 +1,14 @@
-import { useEffect, useRef } from "react";
+import { type ReactElement, useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import { HudPopover } from "@/components/launch/popovers/PopoverScaffold";
+import { useLaunchPopoverCoordinator } from "@/components/launch/popovers/LaunchPopoverCoordinator";
+import styles from "@/components/launch/LaunchWindow.module.css";
 import { useAutoDemoStore } from "./useAutoDemoStore";
 import { Step1Inputs } from "./steps/Step1Inputs";
 import { Step2Script } from "./steps/Step2Script";
 import { Step3Progress } from "./steps/Step3Progress";
-import styles from "@/components/launch/LaunchWindow.module.css";
-import "@/components/launch/launchTheme.css";
 
-// Inject keyframe animations into document once
-const KEYFRAMES = `
-@keyframes spin { to { transform: rotate(360deg); } }
-@keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
-@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
-`;
-if (typeof document !== "undefined" && !document.getElementById("__auto-demo-kf")) {
-  const s = document.createElement("style");
-  s.id = "__auto-demo-kf";
-  s.textContent = KEYFRAMES;
-  document.head.appendChild(s);
-}
+const POPOVER_ID = "auto-demo";
 
 const SLIDE_VARIANTS = {
   enter: (dir: number) => ({ x: dir > 0 ? 30 : -30, opacity: 0 }),
@@ -26,7 +16,15 @@ const SLIDE_VARIANTS = {
   exit: (dir: number) => ({ x: dir > 0 ? -30 : 30, opacity: 0 }),
 };
 
-export function AutoDemoWindow() {
+interface Props {
+  trigger: ReactElement;
+  onRunningChange?: (running: boolean) => void;
+}
+
+export function AutoDemoPopover({ trigger, onRunningChange }: Props) {
+  const { isOpen, requestOpen, requestClose } = useLaunchPopoverCoordinator();
+  const open = isOpen(POPOVER_ID);
+
   const store = useAutoDemoStore();
   const {
     step, setStep,
@@ -34,17 +32,19 @@ export function AutoDemoWindow() {
     repoStatus, setRepoStatus,
     githubPat, setGithubPat,
     featureMap, script,
-    stages, errorMessage, projectPath,
+    stages,
+    errorMessage,
+    projectPath,
     isGenerating, setIsGenerating,
     isRecording, setIsRecording,
-    isRendering, setIsRendering,
+    isRendering,
     savedConfigs, loadConfig, deleteConfig, saveConfig,
     reset,
     rawVideoPath, traceJsonPath,
     logLines,
   } = store;
 
-  // ── Step 1: generate script ───────────────────────────────────────────────
+  // ── Step 1: Generate script ──────────────────────────────────────────────────
 
   const handleGenerate = async () => {
     setIsGenerating(true);
@@ -59,25 +59,27 @@ export function AutoDemoWindow() {
       });
     } catch (err) {
       setIsGenerating(false);
-      console.error("[AutoDemoWindow] generate-script failed:", err);
+      console.error("[AutoDemoPopover] generate-script failed:", err);
     }
   };
 
-  // ── Step 2: approve & record ──────────────────────────────────────────────
+  // ── Step 2: Approve & record ──────────────────────────────────────────────────
 
   const handleApproveAndRecord = async () => {
     if (!script) return;
     setIsRecording(true);
     setStep(3);
+    onRunningChange?.(true);
     try {
       await window.electronAPI?.autoDemoRecord?.({ scriptJson: JSON.stringify(script) });
     } catch (err) {
       setIsRecording(false);
-      console.error("[AutoDemoWindow] record failed:", err);
+      onRunningChange?.(false);
+      console.error("[AutoDemoPopover] record failed:", err);
     }
   };
 
-  // ── Open video review window when rawVideoPath arrives ────────────────────
+  // ── Open video review window when rawVideoPath arrives ────────────────────────
 
   const lastReviewedPath = useRef("");
   useEffect(() => {
@@ -87,25 +89,26 @@ export function AutoDemoWindow() {
     }
   }, [rawVideoPath]);
 
-  // ── Trigger render phase when user approves the video ─────────────────────
+  // ── Trigger render phase when user approves the video review ──────────────────
 
   const hasStartedRender = useRef(false);
   useEffect(() => {
     if (isRendering && rawVideoPath && traceJsonPath && !hasStartedRender.current) {
       hasStartedRender.current = true;
+      onRunningChange?.(true);
       void window.electronAPI?.autoDemoRender?.({
         videoPath: rawVideoPath,
         traceJsonPath,
         productionUrl: formValues.productionUrl.trim() || undefined,
       }).catch((err: unknown) => {
-        console.error("[AutoDemoWindow] render failed:", err);
-        setIsRendering(false);
+        console.error("[AutoDemoPopover] render failed:", err);
+        store.setIsRendering(false);
       });
     }
     if (!isRendering) hasStartedRender.current = false;
   }, [isRendering, rawVideoPath, traceJsonPath]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Step 2: regenerate ────────────────────────────────────────────────────
+  // ── Step 2: Regenerate ────────────────────────────────────────────────────────
 
   const handleRegenerate = async (refinement: string) => {
     setIsGenerating(true);
@@ -119,12 +122,15 @@ export function AutoDemoWindow() {
       });
     } catch (err) {
       setIsGenerating(false);
-      console.error("[AutoDemoWindow] regenerate failed:", err);
+      console.error("[AutoDemoPopover] regenerate failed:", err);
     }
   };
 
+  // ── Cancel ────────────────────────────────────────────────────────────────────
+
   const handleCancel = async () => {
     await window.electronAPI?.autoDemoCancel?.();
+    onRunningChange?.(false);
     reset();
   };
 
@@ -136,24 +142,25 @@ export function AutoDemoWindow() {
   const slideDir = step >= 2 ? 1 : -1;
 
   return (
-    <div
-      className="launch-theme"
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100vh",
-        background: "var(--launch-surface)",
-        fontFamily: "Roboto, SF Pro Display, Helvetica, sans-serif",
-        fontSize: 13,
-        color: "var(--launch-text)",
-        userSelect: "none",
-        overflow: "hidden",
+    <HudPopover
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) { requestClose(POPOVER_ID); return; }
+        requestOpen(POPOVER_ID);
       }}
+      trigger={trigger}
+      align="end"
+      width={380}
     >
-      {/* macOS traffic-light drag region */}
-      <div style={{ height: 44, WebkitAppRegion: "drag", flexShrink: 0 } as React.CSSProperties} />
-
-      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+      <div
+        style={{
+          maxHeight: "min(540px, calc(100vh - 80px))",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+          padding: 0,
+        }}
+      >
         <AnimatePresence mode="wait" custom={slideDir}>
           {step === 1 && (
             <motion.div
@@ -164,7 +171,7 @@ export function AutoDemoWindow() {
               animate="center"
               exit="exit"
               transition={{ duration: 0.18, ease: "easeOut" }}
-              style={{ flex: 1, overflowY: "auto" }}
+              style={{ overflowY: "auto", maxHeight: "min(540px, calc(100vh - 80px))" }}
             >
               <Step1Inputs
                 formValues={formValues}
@@ -194,7 +201,7 @@ export function AutoDemoWindow() {
               animate="center"
               exit="exit"
               transition={{ duration: 0.18, ease: "easeOut" }}
-              style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}
+              style={{ display: "flex", flexDirection: "column", height: "min(540px, calc(100vh - 80px))" }}
             >
               <Step2Script
                 featureMap={featureMap}
@@ -218,7 +225,7 @@ export function AutoDemoWindow() {
               animate="center"
               exit="exit"
               transition={{ duration: 0.18, ease: "easeOut" }}
-              style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}
+              style={{ display: "flex", flexDirection: "column", height: "min(540px, calc(100vh - 80px))" }}
             >
               <Step3Progress
                 stages={stages}
@@ -233,6 +240,6 @@ export function AutoDemoWindow() {
           )}
         </AnimatePresence>
       </div>
-    </div>
+    </HudPopover>
   );
 }

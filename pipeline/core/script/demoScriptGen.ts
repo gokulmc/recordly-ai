@@ -48,6 +48,8 @@ const STEP_SCHEMA = `Array of step objects. Each step has:
 export interface ScriptGenOptions {
   authEmail?: string;
   authPassword?: string;
+  /** Optional natural-language description of which features/flows to cover */
+  focusArea?: string;
 }
 
 export async function generateDemoScript(
@@ -55,7 +57,7 @@ export async function generateDemoScript(
   productionUrl: string,
   opts: ScriptGenOptions = {},
 ): Promise<RecordingScript> {
-  const { authEmail, authPassword } = opts;
+  const { authEmail, authPassword, focusArea } = opts;
   const featureSummary = featureMap.features
     .sort((a, b) => b.importance - a.importance)
     .slice(0, 4) // top 4 features for a concise demo
@@ -97,6 +99,7 @@ ${authEmail && authPassword
   : `7. NO login steps — demo only public/unauthenticated features.
    If a feature requires login, navigate to it anyway and show the login gate as a feature.`}
 8. Prefer fill/type + keypress(Enter) over clicking submit buttons (more natural)
+${focusArea ? `\nFOCUS AREA: ${focusArea}\nPrioritise these specific features/flows above all others.` : ""}
 
 ${STEP_SCHEMA}
 

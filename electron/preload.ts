@@ -1013,6 +1013,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		ipcRenderer.invoke("extensions:review-update", reviewId, status, notes),
 
 	// ── Auto Demo ────────────────────────────────────────────────────────
+	openAutoDemoWindow: () => ipcRenderer.invoke("auto-demo:open-window"),
 	autoDemoStart: (opts: {
 		repoUrl: string;
 		productionUrl: string;
@@ -1033,5 +1034,43 @@ contextBridge.exposeInMainWorld("electronAPI", {
 			callback(evt as Parameters<typeof callback>[0]);
 		ipcRenderer.on("auto-demo:progress", listener);
 		return () => ipcRenderer.removeListener("auto-demo:progress", listener);
+	},
+
+	// ── Auto Demo — Granular Handlers ─────────────────────────────────
+	autoDemoCheckRepo: (url: string) =>
+		ipcRenderer.invoke("auto-demo:check-repo", url) as Promise<{ accessible: boolean; needsPat: boolean }>,
+	autoDemoGenerateScript: (opts: {
+		repoUrl: string;
+		productionUrl: string;
+		authEmail?: string;
+		authPassword?: string;
+		focusArea?: string;
+	}) => ipcRenderer.invoke("auto-demo:generate-script", opts) as Promise<{ success: boolean }>,
+	autoDemoRecord: (opts: { scriptJson: string; outDir?: string }) =>
+		ipcRenderer.invoke("auto-demo:record", opts) as Promise<{ success: boolean }>,
+	autoDemoRender: (opts: {
+		videoPath: string;
+		traceJsonPath: string;
+		productionUrl?: string;
+		outDir?: string;
+	}) => ipcRenderer.invoke("auto-demo:render", opts) as Promise<{ success: boolean }>,
+	onAutoDemoPhaseResult: (callback: (result: unknown) => void) => {
+		const listener = (_event: Electron.IpcRendererEvent, result: unknown) => callback(result);
+		ipcRenderer.on("auto-demo:phase-result", listener);
+		return () => ipcRenderer.removeListener("auto-demo:phase-result", listener);
+	},
+
+	// ── Video Review Window ────────────────────────────────────────────
+	openVideoReview: (videoPath: string) =>
+		ipcRenderer.invoke("video-review:open", videoPath),
+	closeVideoReview: () =>
+		ipcRenderer.invoke("video-review:close"),
+	onVideoReviewDecision: (callback: (decision: "approve" | "modify") => void) => {
+		const listener = (_event: Electron.IpcRendererEvent, decision: "approve" | "modify") => callback(decision);
+		ipcRenderer.on("video-review:decision", listener);
+		return () => ipcRenderer.removeListener("video-review:decision", listener);
+	},
+	sendVideoReviewDecision: (decision: "approve" | "modify") => {
+		ipcRenderer.send("video-review:user-decision", decision);
 	},
 });

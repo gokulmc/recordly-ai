@@ -57,7 +57,10 @@ if (REPO_URL) {
 
   // 3. Crawl production URL → enrich selectors
   console.log("▶  crawling production URL …");
-  const enriched = await crawlAndEnrich(featureMap, TARGET_URL);
+  const enriched = await crawlAndEnrich(featureMap, TARGET_URL, {
+    authEmail: AUTH_EMAIL ?? undefined,
+    authPassword: AUTH_PASS ?? undefined,
+  });
 
   // 4. LLM demo-script generation → DemoStep[]
   console.log("▶  generating demo script …");

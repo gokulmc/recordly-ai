@@ -3,6 +3,9 @@
  * and relayed by the Electron main process to the Auto-demo window renderer.
  */
 
+import type { AppFeatureMap } from "./appFeatureMap.js";
+import type { RecordingScript } from "../record/types.js";
+
 export type StageId =
   | "ingest"
   | "crawl"
@@ -28,8 +31,16 @@ export interface StageEvent {
 export type StagePayload =
   | { kind: "ingest"; featureCount: number; fileCount: number; appName: string }
   | { kind: "crawl"; enrichedFeatures: number }
-  | { kind: "script"; stepCount: number; preview: string[] }
-  | { kind: "record"; eventCount: number; videoPath: string }
+  | {
+      kind: "script";
+      stepCount: number;
+      preview: string[];
+      /** Full feature map — used by renderer to render the flowchart */
+      featureMap: AppFeatureMap;
+      /** Full recording script — used by renderer to display step detail */
+      script: RecordingScript;
+    }
+  | { kind: "record"; eventCount: number; videoPath: string; traceJsonPath: string }
   | { kind: "derive"; zoomRegionCount: number }
   | { kind: "assemble"; projectPath: string }
   | { kind: "done"; projectPath: string }
