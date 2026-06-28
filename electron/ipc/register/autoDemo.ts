@@ -45,12 +45,14 @@ import type { SelectedSource } from "../types";
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface AutoDemoStartOpts {
-	/** Absolute path to the GitHub-cloned repo. */
-	repoPath?: string;
+	/** GitHub repo URL or local filesystem path. */
+	repoUrl: string;
 	/** Production URL of the running app. */
 	productionUrl: string;
-	/** Output mp4 path. */
-	outputPath: string;
+	/** Demo account email (optional). */
+	authEmail?: string;
+	/** Demo account password (optional). */
+	authPassword?: string;
 }
 
 interface NativeCaptureStartMsg {
@@ -179,11 +181,11 @@ export function forkPipelineChild(
 	const child = fork(pipelineCliPath, [], {
 		env: {
 			...process.env,
+			PIPELINE_REPO_URL: opts.repoUrl,
 			PIPELINE_PRODUCTION_URL: opts.productionUrl,
-			PIPELINE_OUTPUT_PATH: opts.outputPath,
-			PIPELINE_REPO_PATH: opts.repoPath ?? "",
+			PIPELINE_AUTH_EMAIL: opts.authEmail ?? "",
+			PIPELINE_AUTH_PASSWORD: opts.authPassword ?? "",
 		},
-		// The child communicates via its IPC channel (process.send / process.on)
 		silent: false,
 	});
 
@@ -196,7 +198,7 @@ export function forkPipelineChild(
 		switch (m["type"]) {
 			case "native-capture:start":
 				void handleNativeCaptureStart(m as unknown as NativeCaptureStartMsg, (resp) => {
-					child.send(resp);
+					child.send(resp as Parameters<typeof child.send>[0]);
 				});
 				break;
 

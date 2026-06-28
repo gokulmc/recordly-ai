@@ -47,6 +47,7 @@ import {
 	createSourceSelectorWindow,
 	getHudOverlayWindow,
 	getUpdateToastWindow,
+	createAutoDemoWindow,
 	hideUpdateToastWindow,
 	isHudOverlayMousePassthroughSupported,
 	reassertHudOverlayMousePassthrough as reassertHudOverlayMouseState,
@@ -437,6 +438,16 @@ function setupApplicationMenu() {
 				{ role: "zoomOut" },
 				{ type: "separator" },
 				{ role: "togglefullscreen" },
+			],
+		},
+		{
+			label: "Tools",
+			submenu: [
+				{
+					label: "Auto Demo…",
+					accelerator: "CmdOrCtrl+Shift+D",
+					click: () => createAutoDemoWindow(),
+				},
 			],
 		},
 		{

@@ -969,7 +969,7 @@ export function createSmokeExportWindow(opts: SmokeExportWindowOpts): SmokeExpor
 		win.once("closed", async () => {
 			const reportPath = `${outputPath}.report.json`;
 			try {
-				const raw = await fs.readFile(reportPath, "utf-8");
+				const raw = await fs.promises.readFile(reportPath, "utf-8");
 				const report = JSON.parse(raw) as {
 					success: boolean;
 					outputPath?: string;
@@ -1114,4 +1114,52 @@ export function closeCountdownWindow(): void {
 		countdownWindow.close();
 		countdownWindow = null;
 	}
+}
+
+// ── Auto-demo window ──────────────────────────────────────────────────────────
+
+let autoDemoWindow: BrowserWindow | null = null;
+
+export function createAutoDemoWindow(): BrowserWindow {
+	if (autoDemoWindow && !autoDemoWindow.isDestroyed()) {
+		autoDemoWindow.focus();
+		return autoDemoWindow;
+	}
+
+	const win = new BrowserWindow({
+		width: 420,
+		height: 620,
+		minWidth: 360,
+		minHeight: 500,
+		resizable: true,
+		titleBarStyle: "hiddenInset",
+		trafficLightPosition: { x: 14, y: 14 },
+		backgroundColor: "#1a1a1a",
+		title: "Auto Demo",
+		webPreferences: {
+			preload: path.join(electronWindowsDir, "preload.js"),
+			contextIsolation: true,
+			nodeIntegration: false,
+		},
+	});
+
+	autoDemoWindow = win;
+
+	win.on("closed", () => {
+		if (autoDemoWindow === win) autoDemoWindow = null;
+	});
+
+	if (VITE_DEV_SERVER_URL) {
+		win.loadURL(VITE_DEV_SERVER_URL + "?windowType=auto-demo");
+	} else {
+		win.loadFile(path.join(RENDERER_DIST, "index.html"), {
+			query: { windowType: "auto-demo" },
+		});
+	}
+
+	return win;
+}
+
+export function getAutoDemoWindow(): BrowserWindow | null {
+	return autoDemoWindow;
 }

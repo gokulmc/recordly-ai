@@ -1011,4 +1011,27 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		ipcRenderer.invoke("extensions:reviews-list", params),
 	extensionsReviewUpdate: (reviewId: string, status: string, notes?: string) =>
 		ipcRenderer.invoke("extensions:review-update", reviewId, status, notes),
+
+	// ── Auto Demo ────────────────────────────────────────────────────────
+	autoDemoStart: (opts: {
+		repoUrl: string;
+		productionUrl: string;
+		authEmail?: string;
+		authPassword?: string;
+	}) => ipcRenderer.invoke("auto-demo:start", opts),
+	autoDemoCancel: () => ipcRenderer.invoke("auto-demo:cancel"),
+	onAutoDemoProgress: (
+		callback: (evt: {
+			type: "stage";
+			stageId: string;
+			status: string;
+			message: string;
+			payload?: unknown;
+		}) => void,
+	) => {
+		const listener = (_event: Electron.IpcRendererEvent, evt: unknown) =>
+			callback(evt as Parameters<typeof callback>[0]);
+		ipcRenderer.on("auto-demo:progress", listener);
+		return () => ipcRenderer.removeListener("auto-demo:progress", listener);
+	},
 });

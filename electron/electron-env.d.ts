@@ -937,6 +937,24 @@ interface Window {
 			status: RendererMarketplaceReviewStatus,
 			notes?: string,
 		) => Promise<{ success: boolean; error?: string }>;
+
+		// ── Auto Demo ──────────────────────────────────────────────────────
+		autoDemoStart: (opts: {
+			repoUrl: string;
+			productionUrl: string;
+			authEmail?: string;
+			authPassword?: string;
+		}) => Promise<{ success: boolean }>;
+		autoDemoCancel: () => Promise<{ success: boolean }>;
+		onAutoDemoProgress: (
+			callback: (evt: {
+				type: "stage";
+				stageId: string;
+				status: string;
+				message: string;
+				payload?: unknown;
+			}) => void,
+		) => () => void;
 	};
 }
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AutoDemoWindow } from "./components/auto-demo/AutoDemoWindow";
 import { CountdownOverlay } from "./components/countdown/CountdownOverlay";
 import { LaunchWindow } from "./components/launch/LaunchWindow";
 import { SourceSelector } from "./components/launch/SourceSelector";
@@ -77,6 +78,8 @@ export default function App() {
 					<ShortcutsConfigDialog />
 				</ShortcutsProvider>
 			);
+		case "auto-demo":
+			return <AutoDemoWindow />;
 		default:
 			return (
 				<div className="flex h-full w-full items-center justify-center bg-editor-bg text-foreground">

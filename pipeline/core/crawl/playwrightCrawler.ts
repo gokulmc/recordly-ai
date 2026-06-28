@@ -135,14 +135,22 @@ async function crawlFeaturePage(
   return { feature: updatedFeature, elements };
 }
 
+export interface CrawlOptions {
+  authEmail?: string;
+  authPassword?: string;
+}
+
 // ── Public API ─────────────────────────────────────────────────────────────────
 
 /**
  * Crawl the production URL and enrich the AppFeatureMap with live selectors.
+ * If credentials are provided, attempts to log in before crawling so that
+ * auth-gated pages yield meaningful selectors.
  */
 export async function crawlAndEnrich(
   featureMap: AppFeatureMap,
   productionUrl: string,
+  opts: CrawlOptions = {},
 ): Promise<AppFeatureMap> {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
@@ -155,9 +163,14 @@ export async function crawlAndEnrich(
   // First visit the root to set cookies / trigger redirects
   try {
     await page.goto(productionUrl, { waitUntil: "domcontentloaded", timeout: 15_000 });
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(1500);
   } catch {
     console.warn("  [crawl] root visit failed, continuing with feature pages");
+  }
+
+  // Attempt login if credentials provided
+  if (opts.authEmail && opts.authPassword) {
+    await attemptLogin(page, productionUrl, opts.authEmail, opts.authPassword);
   }
 
   const updatedFeatures: AppFeature[] = [];
@@ -171,4 +184,58 @@ export async function crawlAndEnrich(
   await browser.close();
 
   return { ...featureMap, features: updatedFeatures };
+}
+
+/** Try to log in by looking for email/password fields on the current page or /login /signin. */
+async function attemptLogin(
+  page: import("playwright").Page,
+  productionUrl: string,
+  email: string,
+  password: string,
+): Promise<void> {
+  console.log("  [crawl] attempting login …");
+
+  // Try known sign-in paths
+  const signinPaths = ["/login", "/signin", "/auth/signin", "/sign-in", "/auth/login"];
+  for (const signinPath of signinPaths) {
+    const url = new URL(signinPath, productionUrl).href;
+    try {
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 10_000 });
+      await page.waitForTimeout(1500);
+      // Check if we landed on a login form (may redirect to Cognito hosted UI)
+      const currentUrl = page.url();
+      const hasEmailField = await page.locator('input[type="email"], input[name="email"], input[name="username"]').first().isVisible({ timeout: 2000 }).catch(() => false);
+      if (hasEmailField) {
+        await page.locator('input[type="email"], input[name="email"], input[name="username"]').first().fill(email);
+        await page.waitForTimeout(300);
+        const hasPassField = await page.locator('input[type="password"]').first().isVisible({ timeout: 2000 }).catch(() => false);
+        if (hasPassField) {
+          await page.locator('input[type="password"]').first().fill(password);
+          await page.waitForTimeout(300);
+          await page.keyboard.press("Enter");
+          await page.waitForTimeout(3000);
+          console.log(`  [crawl] login submitted at ${currentUrl} → ${page.url()}`);
+          return;
+        }
+      }
+    } catch { /* try next path */ }
+  }
+
+  // Fallback: look for a Login button on the current page
+  try {
+    const loginBtn = page.locator('button:text("Login"), a:text("Login"), button:text("Sign in"), a:text("Sign in")').first();
+    const visible = await loginBtn.isVisible({ timeout: 2000 }).catch(() => false);
+    if (visible) {
+      await loginBtn.click();
+      await page.waitForTimeout(2000);
+      await page.locator('input[type="email"], input[name="email"], input[name="username"]').first().fill(email).catch(() => {});
+      await page.locator('input[type="password"]').first().fill(password).catch(() => {});
+      await page.keyboard.press("Enter");
+      await page.waitForTimeout(3000);
+      console.log(`  [crawl] login submitted via button → ${page.url()}`);
+      return;
+    }
+  } catch { /* skip */ }
+
+  console.warn("  [crawl] could not find login form — crawling as anonymous");
 }

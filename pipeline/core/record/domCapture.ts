@@ -40,8 +40,17 @@ export async function captureElementInfo(
 		),
 	);
 
-	return page.evaluate((sel: string) => {
-		const el = document.querySelector(sel);
+	// Use locator() to resolve Playwright-specific selectors (e.g. :has-text())
+	// then pass the resolved element handle into evaluate() for DOM geometry.
+	let elementHandle;
+	try {
+		elementHandle = await page.locator(selector).first().elementHandle({ timeout: 3000 });
+	} catch {
+		return null;
+	}
+	if (!elementHandle) return null;
+
+	return elementHandle.evaluate((el: Element) => {
 		if (!el) return null;
 
 		const rect = el.getBoundingClientRect();
@@ -149,7 +158,7 @@ export async function captureElementInfo(
 			scroll,
 			viewport,
 		};
-	}, selector);
+	});
 }
 
 /**
