@@ -39,6 +39,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { desktopCapturer, ipcMain, type WebContents } from "electron";
 import { openVideoReviewWindow, closeVideoReviewWindow, getHudOverlayWindow, createAutoDemoWindow } from "../../windows";
+import { rememberApprovedLocalReadPath } from "../project/manager";
 import {
 	nativeScreenRecordingActive,
 	setNoCursorTelemetryMode,
@@ -500,7 +501,11 @@ export function registerAutoDemoHandlers(): void {
 	);
 
 	// Video review window
-	ipcMain.handle("video-review:open", (_event, videoPath: string) => {
+	ipcMain.handle("video-review:open", async (_event, videoPath: string) => {
+		// The auto-demo writes to ~/Desktop/recordly-auto-demo, which is outside
+		// the media allowlist. Approve this specific file so the loopback media
+		// server (get-local-media-url) will serve it to the review <video>.
+		await rememberApprovedLocalReadPath(videoPath);
 		openVideoReviewWindow(videoPath);
 	});
 

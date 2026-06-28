@@ -1191,7 +1191,7 @@ export function openVideoReviewWindow(videoPath: string): BrowserWindow {
 		backgroundColor: "#00000000",
 		title: "Video Review",
 		webPreferences: {
-			preload: path.join(electronWindowsDir, "preload.js"),
+			preload: path.join(electronWindowsDir, "preload.mjs"),
 			contextIsolation: true,
 			nodeIntegration: false,
 		},
