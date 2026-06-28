@@ -147,7 +147,7 @@ export function AutoDemoWindow() {
         height: "100vh",
         background: "var(--launch-surface)",
         fontFamily: "Roboto, SF Pro Display, Helvetica, sans-serif",
-        fontSize: 13,
+        fontSize: 14,
         color: "var(--launch-text)",
         userSelect: "none",
         overflow: "hidden",

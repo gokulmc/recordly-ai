@@ -13,7 +13,7 @@ const GITHUB_TOKEN_URL = "https://github.com/settings/tokens/new?scopes=repo&des
 
 function Label({ children }: { children: React.ReactNode }) {
   return (
-    <span style={{ fontSize: 10, fontWeight: 600, color: "var(--launch-label)", textTransform: "uppercase", letterSpacing: "0.07em" }}>
+    <span style={{ fontSize: 11, fontWeight: 600, color: "var(--launch-label)", textTransform: "uppercase", letterSpacing: "0.07em" }}>
       {children}
     </span>
   );
@@ -51,7 +51,7 @@ function FieldInput({
         width: "100%",
         height: 38,
         padding: "0 12px",
-        fontSize: 14,
+        fontSize: 15,
         color: "var(--launch-text)",
         background: "var(--launch-panel)",
         border: "1px solid var(--launch-border)",
@@ -138,8 +138,8 @@ export function Step1Inputs({
       {/* Header */}
       <div style={{ padding: "10px 16px 8px", display: "flex", alignItems: "center", gap: 8 }}>
         <RocketLaunchIcon size={16} style={{ color: "#f97316", flexShrink: 0 }} weight="bold" />
-        <span style={{ fontSize: 21, fontWeight: 600, color: "var(--launch-text)" }}>Auto Demo</span>
-        <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--launch-label)" }}>Step 1 of 3</span>
+        <span style={{ fontSize: 22, fontWeight: 600, color: "var(--launch-text)" }}>Auto Demo</span>
+        <span style={{ marginLeft: "auto", fontSize: 13, color: "var(--launch-label)" }}>Step 1 of 3</span>
       </div>
 
       <div style={{ height: 1, background: "var(--launch-border)", margin: "0 0 2px" }} />
@@ -161,7 +161,7 @@ export function Step1Inputs({
               disabled={isGenerating}
             />
             {checkingRepo && (
-              <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: "var(--launch-label)" }}>
+              <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", fontSize: 12, color: "var(--launch-label)" }}>
                 checking…
               </span>
             )}
@@ -184,8 +184,8 @@ export function Step1Inputs({
                 >
                   <ClockCountdownIcon size={14} style={{ color: "var(--launch-label)", flexShrink: 0 }} />
                   <div style={{ minWidth: 0, flex: 1, textAlign: "left" }}>
-                    <div style={{ fontSize: 13, color: "var(--launch-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cfg.label}</div>
-                    <div style={{ fontSize: 12, color: "var(--launch-label)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cfg.productionUrl}</div>
+                    <div style={{ fontSize: 14, color: "var(--launch-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cfg.label}</div>
+                    <div style={{ fontSize: 13, color: "var(--launch-label)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cfg.productionUrl}</div>
                   </div>
                   <span
                     style={{ color: "var(--launch-label)", padding: 2, borderRadius: 4, flexShrink: 0 }}
@@ -205,12 +205,12 @@ export function Step1Inputs({
           <div style={{ borderRadius: 9, border: "1px solid rgba(234,179,8,0.35)", background: "rgba(234,179,8,0.07)", padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
               <LockKeyIcon size={14} style={{ color: "#ca8a04", flexShrink: 0 }} />
-              <span style={{ fontSize: 13, color: "#92400e", fontWeight: 500 }}>Private repo — access needed</span>
+              <span style={{ fontSize: 14, color: "#92400e", fontWeight: 500 }}>Private repo — access needed</span>
             </div>
             <button
               type="button"
               onClick={() => window.electronAPI?.openExternalUrl?.(GITHUB_TOKEN_URL)}
-              style={{ fontSize: 12, color: "var(--launch-accent)", textAlign: "left", textDecoration: "underline", cursor: "pointer", background: "none", border: "none", padding: 0 }}
+              style={{ fontSize: 13, color: "var(--launch-accent)", textAlign: "left", textDecoration: "underline", cursor: "pointer", background: "none", border: "none", padding: 0 }}
             >
               Create a GitHub token with repo scope →
             </button>
@@ -218,7 +218,7 @@ export function Step1Inputs({
               value={githubPat}
               onChange={setGithubPat}
               placeholder="ghp_xxxxxxxx"
-              style={{ fontFamily: "monospace", fontSize: 13, height: 36 }}
+              style={{ fontFamily: "monospace", fontSize: 14, height: 36 }}
             />
           </div>
         )}
@@ -240,7 +240,7 @@ export function Step1Inputs({
             type="button"
             onClick={() => setShowAuth((v) => !v)}
             disabled={isGenerating}
-            style={{ fontSize: 13, color: "var(--launch-label)", cursor: "pointer", background: "none", border: "none", padding: 0, display: "flex", alignItems: "center", gap: 5 }}
+            style={{ fontSize: 14, color: "var(--launch-label)", cursor: "pointer", background: "none", border: "none", padding: 0, display: "flex", alignItems: "center", gap: 5 }}
           >
             <span>{showAuth ? "▾" : "▸"}</span>
             <span>Demo credentials</span>
@@ -276,7 +276,7 @@ export function Step1Inputs({
             style={{
               width: "100%",
               padding: "10px 12px",
-              fontSize: 14,
+              fontSize: 15,
               color: "var(--launch-text)",
               background: "var(--launch-panel)",
               border: "1px solid var(--launch-border)",
@@ -305,7 +305,7 @@ export function Step1Inputs({
             border: "none",
             background: isReady && !isGenerating ? "var(--launch-accent)" : isGenerating ? "rgba(37,99,235,0.12)" : "var(--launch-hover)",
             color: isReady && !isGenerating ? "#fff" : isGenerating ? "var(--launch-accent)" : "var(--launch-label)",
-            fontSize: 14,
+            fontSize: 15,
             fontWeight: 600,
             cursor: isReady && !isGenerating ? "pointer" : "default",
             display: "flex",

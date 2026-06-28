@@ -128,6 +128,7 @@ const FEATURE_MAP_SCHEMA = `{
   "features": [
     {
       "name": "string",
+      "emoji": "single emoji that represents this feature",
       "description": "string",
       "entryPath": "string (URL path, e.g. /dashboard)",
       "importance": "number 1-5",
@@ -181,6 +182,7 @@ ${FEATURE_MAP_SCHEMA}
 
 Rules:
 - List at most 6 features; pick the most demo-worthy ones.
+- emoji: exactly one emoji that visually captures the feature (e.g. 🔍 for search, 🗺️ for a map, ✏️ for editing).
 - entryPath must be a real navigable URL path (start with /).
 - likelySelectors: guess CSS selectors or role-based selectors (e.g. button[data-testid="submit"]).
 - suggestedFlow: 2-5 concrete Playwright-style steps (click X, type Y, press Enter).

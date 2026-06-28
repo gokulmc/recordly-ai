@@ -6,6 +6,8 @@
 export interface AppFeature {
   /** Short human-readable name */
   name: string;
+  /** Single emoji that best represents this feature (LLM-assigned) */
+  emoji?: string;
   /** One-sentence description of what this feature does */
   description: string;
   /** URL path relative to the production root (e.g. "/dashboard") */

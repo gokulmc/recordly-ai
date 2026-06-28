@@ -5,6 +5,7 @@ import { loadAppSetting, saveAppSetting } from "@/lib/appSettings";
 
 export interface AppFeature {
   name: string;
+  emoji?: string;
   description: string;
   entryPath: string;
   importance: number;

@@ -28,8 +28,8 @@ export function Step2Script({ featureMap, script, isRecording, isRegenerating, o
         >
           <ArrowLeftIcon size={16} />
         </button>
-        <span style={{ fontSize: 14, fontWeight: 600, color: "var(--launch-text)" }}>Script Preview</span>
-        <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--launch-label)" }}>Step 2 of 3</span>
+        <span style={{ fontSize: 15, fontWeight: 600, color: "var(--launch-text)" }}>Script Preview</span>
+        <span style={{ marginLeft: "auto", fontSize: 13, color: "var(--launch-label)" }}>Step 2 of 3</span>
       </div>
 
       <div style={{ height: 1, background: "var(--launch-border)", flexShrink: 0 }} />
@@ -50,7 +50,7 @@ export function Step2Script({ featureMap, script, isRecording, isRegenerating, o
           style={{
             width: "100%",
             padding: "9px 12px",
-            fontSize: 14,
+            fontSize: 15,
             color: "var(--launch-text)",
             background: "var(--launch-panel)",
             border: "1px solid var(--launch-border)",
@@ -77,7 +77,7 @@ export function Step2Script({ featureMap, script, isRecording, isRegenerating, o
               borderRadius: 10,
               border: "1px solid var(--launch-border)",
               height: 40,
-              fontSize: 13,
+              fontSize: 14,
               fontWeight: 500,
               opacity: (!refinement.trim() || isRecording || isRegenerating) ? 0.45 : 1,
             }}
@@ -106,7 +106,7 @@ export function Step2Script({ featureMap, script, isRecording, isRegenerating, o
               border: "none",
               background: "var(--launch-accent)",
               color: "#fff",
-              fontSize: 13,
+              fontSize: 14,
               fontWeight: 600,
               cursor: (isRecording || isRegenerating) ? "default" : "pointer",
               display: "flex",

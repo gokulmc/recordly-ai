@@ -1,13 +1,13 @@
-import { useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { CheckCircleIcon, CircleNotchIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { CheckCircleIcon, CircleNotchIcon, WarningCircleIcon, ArrowsOutLineVerticalIcon, ArrowsInLineVerticalIcon } from "@phosphor-icons/react";
 import type { StageState } from "./useAutoDemoStore";
 
 // Stages relevant to the generate-script phase only
-const SCRIPT_STAGES: Array<{ id: string; label: string }> = [
-  { id: "ingest", label: "Read repo" },
-  { id: "crawl", label: "Crawl app" },
-  { id: "script", label: "Generate" },
+const SCRIPT_STAGES: Array<{ id: string; label: string; emoji: string }> = [
+  { id: "ingest", label: "Read repo", emoji: "📖" },
+  { id: "crawl", label: "Crawl app", emoji: "🕸️" },
+  { id: "script", label: "Generate", emoji: "✨" },
 ];
 
 interface Props {
@@ -16,7 +16,7 @@ interface Props {
   errorMessage?: string | null;
 }
 
-function StagePill({ stage, status }: { stage: string; status: "pending" | "running" | "done" | "error" }) {
+function StagePill({ stage, emoji, status }: { stage: string; emoji: string; status: "pending" | "running" | "done" | "error" }) {
   const isDone = status === "done";
   const isRunning = status === "running";
 
@@ -36,10 +36,10 @@ function StagePill({ stage, status }: { stage: string; status: "pending" | "runn
       ) : isDone ? (
         <CheckCircleIcon size={12} weight="fill" style={{ color: "#059669", flexShrink: 0 }} />
       ) : (
-        <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--launch-border-strong)", display: "inline-block", flexShrink: 0 }} />
+        <span style={{ fontSize: 11, lineHeight: 1, flexShrink: 0, opacity: 0.7 }}>{emoji}</span>
       )}
       <span style={{
-        fontSize: 11,
+        fontSize: 12,
         fontWeight: 500,
         color: isRunning ? "#2563eb" : isDone ? "#059669" : "var(--launch-label)",
         whiteSpace: "nowrap",
@@ -62,11 +62,12 @@ function ConnectorDot({ done }: { done: boolean }) {
 
 export function GeneratingLog({ stages, logLines, errorMessage }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [verbose, setVerbose] = useState(false);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [logLines]);
+  }, [logLines, verbose]);
 
   const getStageStatus = (id: string): "pending" | "running" | "done" | "error" => {
     return stages.find((s) => s.id === id)?.status ?? "pending";
@@ -101,37 +102,65 @@ export function GeneratingLog({ stages, logLines, errorMessage }: Props) {
         }}>
           {SCRIPT_STAGES.map((s, i) => (
             <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <StagePill stage={s.label} status={getStageStatus(s.id)} />
+              <StagePill stage={s.label} emoji={s.emoji} status={getStageStatus(s.id)} />
               {i < SCRIPT_STAGES.length - 1 && (
                 <ConnectorDot done={getStageStatus(s.id) === "done"} />
               )}
             </div>
           ))}
-          <span style={{
-            marginLeft: "auto",
-            fontSize: 10,
-            color: "var(--launch-label)",
-            fontStyle: "italic",
-            animation: "pulse 2s ease-in-out infinite",
-          }}>
-            {currentStageLabel}
-          </span>
+          {!errorMessage && (
+            <span style={{
+              marginLeft: "auto",
+              fontSize: 11,
+              color: "var(--launch-label)",
+              fontStyle: "italic",
+              animation: "pulse 2s ease-in-out infinite",
+            }}>
+              {currentStageLabel}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => setVerbose((v) => !v)}
+            title={verbose ? "Collapse log" : "Show full log"}
+            style={{
+              marginLeft: errorMessage ? "auto" : 8,
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              padding: "3px 8px",
+              borderRadius: 7,
+              border: "1px solid var(--launch-border)",
+              background: verbose ? "var(--launch-selected)" : "transparent",
+              color: verbose ? "var(--launch-accent)" : "var(--launch-label)",
+              cursor: "pointer",
+              fontSize: 11,
+              fontWeight: 500,
+              flexShrink: 0,
+            }}
+          >
+            {verbose
+              ? <ArrowsInLineVerticalIcon size={12} weight="bold" />
+              : <ArrowsOutLineVerticalIcon size={12} weight="bold" />}
+            {verbose ? "Less" : "Verbose"}
+          </button>
         </div>
 
         {/* Log text area */}
         <div
           ref={scrollRef}
           style={{
-            height: 160,
+            height: verbose ? 360 : 160,
             overflowY: "auto",
             padding: "10px 14px",
             display: "flex",
             flexDirection: "column",
             gap: 1,
+            transition: "height 0.2s ease",
           }}
         >
           {logLines.length === 0 && !errorMessage ? (
-            <span style={{ fontSize: 12, color: "var(--launch-label)", fontStyle: "italic", fontFamily: "monospace" }}>
+            <span style={{ fontSize: 13, color: "var(--launch-label)", fontStyle: "italic", fontFamily: "monospace" }}>
               Initialising…
             </span>
           ) : (
@@ -139,7 +168,7 @@ export function GeneratingLog({ stages, logLines, errorMessage }: Props) {
               const isLast = i === logLines.length - 1 && !errorMessage;
               return (
                 <div key={i} style={{
-                  fontSize: 11.5,
+                  fontSize: 12.5,
                   lineHeight: 1.6,
                   color: isLast ? "var(--launch-text)" : "var(--launch-text-muted)",
                   fontFamily: "'Roboto Mono', 'SF Mono', 'Fira Code', monospace",
@@ -178,7 +207,7 @@ export function GeneratingLog({ stages, logLines, errorMessage }: Props) {
             }}>
               <WarningCircleIcon size={14} weight="fill" style={{ color: "#dc2626", flexShrink: 0, marginTop: 1 }} />
               <span style={{
-                fontSize: 11.5,
+                fontSize: 12.5,
                 lineHeight: 1.5,
                 color: "#991b1b",
                 fontFamily: "'Roboto Mono', 'SF Mono', monospace",

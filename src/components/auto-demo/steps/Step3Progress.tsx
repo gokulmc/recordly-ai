@@ -31,10 +31,10 @@ export function Step3Progress({ stages, errorMessage, projectPath, isRunning, on
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       {/* Header */}
       <div style={{ padding: "10px 16px 8px", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-        <span style={{ fontSize: 14, fontWeight: 600, color: "var(--launch-text)" }}>
+        <span style={{ fontSize: 15, fontWeight: 600, color: "var(--launch-text)" }}>
           {isDone ? "All done" : isRunning ? "Running pipeline…" : "Progress"}
         </span>
-        <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--launch-label)" }}>Step 3 of 3</span>
+        <span style={{ marginLeft: "auto", fontSize: 13, color: "var(--launch-label)" }}>Step 3 of 3</span>
       </div>
 
       <div style={{ height: 1, background: "var(--launch-border)", flexShrink: 0 }} />
@@ -61,7 +61,7 @@ export function Step3Progress({ stages, errorMessage, projectPath, isRunning, on
             </div>
             <div style={{ minWidth: 0, flex: 1 }}>
               <p style={{
-                fontSize: 13,
+                fontSize: 14,
                 fontWeight: 500,
                 color: stage.status === "pending" ? "var(--launch-label)" : stage.status === "error" ? "#dc2626" : "var(--launch-text)",
                 margin: 0,
@@ -70,7 +70,7 @@ export function Step3Progress({ stages, errorMessage, projectPath, isRunning, on
                 {stage.label}
               </p>
               {stage.message && stage.status !== "pending" && (
-                <p style={{ fontSize: 12, color: "var(--launch-text-muted)", margin: "3px 0 0", lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <p style={{ fontSize: 13, color: "var(--launch-text-muted)", margin: "3px 0 0", lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {stage.message}
                 </p>
               )}
@@ -81,7 +81,7 @@ export function Step3Progress({ stages, errorMessage, projectPath, isRunning, on
         {errorMessage && (
           <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "7px 10px", borderRadius: 8, background: "rgba(220,38,38,0.05)" }}>
             <XCircleIcon size={15} weight="fill" style={{ color: "#dc2626", flexShrink: 0, marginTop: 1 }} />
-            <p style={{ fontSize: 11, color: "#991b1b", margin: 0, lineHeight: 1.4 }}>{errorMessage}</p>
+            <p style={{ fontSize: 12, color: "#991b1b", margin: 0, lineHeight: 1.4 }}>{errorMessage}</p>
           </div>
         )}
       </div>
@@ -99,7 +99,7 @@ export function Step3Progress({ stages, errorMessage, projectPath, isRunning, on
               border: "none",
               background: "#059669",
               color: "#fff",
-              fontSize: 14,
+              fontSize: 15,
               fontWeight: 600,
               cursor: "pointer",
               display: "flex",
@@ -122,7 +122,7 @@ export function Step3Progress({ stages, errorMessage, projectPath, isRunning, on
               border: "1px solid var(--launch-border)",
               background: "var(--launch-hover)",
               color: "var(--launch-text-muted)",
-              fontSize: 14,
+              fontSize: 15,
               fontWeight: 500,
               cursor: "pointer",
             }}
