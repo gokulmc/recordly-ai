@@ -88,12 +88,12 @@ console.log(`   events:   ${result.trace.events.length}`);
 console.log(`   segments: ${result.trace.segments.length}`);
 
 // Derive zoom regions from the trace
-const zoomRegions = deriveZoomRegions(result.trace);
+const { regions: zoomRegions } = deriveZoomRegions(result.trace);
 console.log(`✓  derived   ${zoomRegions.length} zoom region(s)`);
 
 // Derive cursor telemetry
-const { samples, visualSettings } = deriveCursorTelemetry(result.trace);
-console.log(`✓  cursor    ${samples.length} samples, style=${visualSettings.style}`);
+const { samples, cursorVisual } = deriveCursorTelemetry(result.trace);
+console.log(`✓  cursor    ${samples.length} samples, style=${cursorVisual.style}`);
 
 // M4 stub: LLM saliency would filter/adjust zoomRegions here
 // if (USE_LLM) { zoomRegions = await applySaliency(result.trace, zoomRegions); }
@@ -106,7 +106,7 @@ const project = await buildProject({
   videoPath: result.videoPath,
   zoomRegions,
   samples,
-  cursorVisual: visualSettings,
+  cursorVisual,
   outDir: OUT_DIR,
 });
 

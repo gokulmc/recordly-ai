@@ -53,7 +53,6 @@ import {
 	setHudOverlayRecordingActive,
 	showUpdateToastWindow,
 } from "./windows";
-import { loadProjectFromPath } from "./ipc/project/manager";
 
 const electronMainDir = path.dirname(fileURLToPath(import.meta.url));
 const IS_SMOKE_EXPORT = process.env.RECORDLY_SMOKE_EXPORT === "1";
@@ -1002,12 +1001,15 @@ app.whenReady().then(async () => {
 	setupAutoUpdates(getUpdateDialogWindow, sendUpdateToastToWindows);
 
 	if (OPEN_PROJECT_PATH) {
-		// Give the window a moment to finish loading before opening the project.
-		// The IPC handler (`open-project-file-at-path`) is already registered above.
+		// Lazy import: manager.ts → appPaths.ts calls app.getPath() at module
+		// level, so it must not be imported before app.whenReady() resolves.
+		// Give the window 2s to finish loading before opening the project.
 		setTimeout(() => {
-			void loadProjectFromPath(OPEN_PROJECT_PATH).catch((err: unknown) => {
-				console.error("[main] --open-project failed:", err);
-			});
+			void import("./ipc/project/manager").then(({ loadProjectFromPath }) =>
+				loadProjectFromPath(OPEN_PROJECT_PATH!).catch((err: unknown) => {
+					console.error("[main] --open-project failed:", err);
+				}),
+			);
 		}, 2000);
 	}
 
