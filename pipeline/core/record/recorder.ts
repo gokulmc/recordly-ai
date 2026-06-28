@@ -374,22 +374,38 @@ async function executeStep(
 		}
 		case "click": {
 			if (!step.selector) throw new Error("click step requires a selector");
-			await traceClick(page, trace, step.selector);
+			try {
+				await traceClick(page, trace, step.selector);
+			} catch (err) {
+				console.warn(`  [recorder] click "${step.selector}" failed, skipping: ${String(err).split("\n")[0]}`);
+			}
 			break;
 		}
 		case "dblclick": {
 			if (!step.selector) throw new Error("dblclick step requires a selector");
-			await traceDblClick(page, trace, step.selector);
+			try {
+				await traceDblClick(page, trace, step.selector);
+			} catch (err) {
+				console.warn(`  [recorder] dblclick "${step.selector}" failed, skipping: ${String(err).split("\n")[0]}`);
+			}
 			break;
 		}
 		case "fill": {
 			if (!step.selector) throw new Error("fill step requires a selector");
-			await traceFill(page, trace, step.selector, step.value ?? "");
+			try {
+				await traceFill(page, trace, step.selector, step.value ?? "");
+			} catch (err) {
+				console.warn(`  [recorder] fill "${step.selector}" failed, skipping: ${String(err).split("\n")[0]}`);
+			}
 			break;
 		}
 		case "hover": {
 			if (!step.selector) throw new Error("hover step requires a selector");
-			await traceHover(page, trace, step.selector);
+			try {
+				await traceHover(page, trace, step.selector);
+			} catch (err) {
+				console.warn(`  [recorder] hover "${step.selector}" failed, skipping: ${String(err).split("\n")[0]}`);
+			}
 			break;
 		}
 		case "scroll": {
@@ -407,7 +423,11 @@ async function executeStep(
 		}
 		case "type": {
 			if (!step.selector) throw new Error("type step requires a selector");
-			await page.type(step.selector, step.value ?? "");
+			try {
+				await page.type(step.selector, step.value ?? "");
+			} catch (err) {
+				console.warn(`  [recorder] type "${step.selector}" failed, skipping: ${String(err).split("\n")[0]}`);
+			}
 			break;
 		}
 	}
