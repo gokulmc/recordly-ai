@@ -18,6 +18,7 @@ export interface AppFeatureMap {
   features: AppFeature[];
   primaryFlows: string[][];
   authNeeded: boolean;
+  loginUrl?: string;
 }
 
 export interface DemoStep {

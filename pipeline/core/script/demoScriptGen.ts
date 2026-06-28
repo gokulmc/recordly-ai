@@ -52,6 +52,34 @@ export interface ScriptGenOptions {
   focusArea?: string;
 }
 
+/**
+ * Build a deterministic login sequence. We do NOT trust the LLM to log in
+ * correctly — instead we mirror the crawl's working login (generic email +
+ * password fields, Enter) and navigate to the URL where the crawl actually
+ * found the form. This guarantees the demo starts signed in.
+ */
+function buildLoginSteps(
+  featureMap: AppFeatureMap,
+  productionUrl: string,
+  email: string,
+  password: string,
+): DemoStep[] {
+  const loginUrl = featureMap.loginUrl ?? new URL("/login", productionUrl).href;
+  return [
+    { action: "navigate", url: loginUrl, narration: `Signing in to ${featureMap.appName}.` },
+    { action: "wait", waitMs: 1200 },
+    {
+      action: "fill",
+      selector: 'input[type="email"], input[name="email"], input[name="username"]',
+      value: email,
+      narration: "Entering the demo account email.",
+    },
+    { action: "fill", selector: 'input[type="password"]', value: password, narration: "Entering the password." },
+    { action: "keypress", key: "Enter", narration: "Logging in." },
+    { action: "wait", waitMs: 3000, narration: "Loading the signed-in experience." },
+  ];
+}
+
 export async function generateDemoScript(
   featureMap: AppFeatureMap,
   productionUrl: string,
@@ -93,9 +121,9 @@ Generate a demo script that:
 5. Each meaningful interaction has a narration string (what the viewer would understand)
 6. Total duration: ~30-60 seconds of interactions (not counting waits between features)
 ${authEmail && authPassword
-  ? `7. Auth credentials ARE provided: email="${authEmail}", password="[hidden]".
-   Start with a login sequence: navigate to the sign-in page, fill email, fill password, submit.
-   Then proceed to the authenticated features.`
+  ? `7. Do NOT include any login / sign-in steps. A reliable login is performed
+   automatically BEFORE your steps. Begin directly with the first authenticated
+   feature, assuming the user is already signed in.`
   : `7. NO login steps — demo only public/unauthenticated features.
    If a feature requires login, navigate to it anyway and show the login gate as a feature.`}
 8. Prefer fill/type + keypress(Enter) over clicking submit buttons (more natural)
@@ -115,7 +143,7 @@ Example shape: [{"action":"navigate","url":"https://...","narration":"Opening fo
   const llmSteps = parseJson<LlmDemoStep[]>(raw);
 
   // Validate + normalise to DemoStep
-  const steps: DemoStep[] = llmSteps
+  const llmDemoSteps: DemoStep[] = llmSteps
     .filter((s) => typeof s.action === "string")
     .map((s): DemoStep => {
       // Substitute the real password for the placeholder the LLM used
@@ -132,6 +160,13 @@ Example shape: [{"action":"navigate","url":"https://...","narration":"Opening fo
       if (s.narration) base.narration = s.narration;
       return base;
     });
+
+  // Deterministically prepend login when credentials are provided, so the demo
+  // always starts signed in (rather than relying on the LLM to log in).
+  const steps: DemoStep[] =
+    authEmail && authPassword
+      ? [...buildLoginSteps(featureMap, productionUrl, authEmail, authPassword), ...llmDemoSteps]
+      : llmDemoSteps;
 
   console.log(`  [script] generated ${steps.length} steps`);
   if (steps.length > 0) {

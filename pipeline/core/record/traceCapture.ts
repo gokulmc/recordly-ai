@@ -218,6 +218,13 @@ export async function traceFill(
 	const info = await captureElementInfo(page, resolved.selector);
 	if (!info) return;
 
+	// Never persist a typed password to the on-disk trace. Detect by the live
+	// element type as well as the selector text.
+	const isPassword =
+		/password/i.test(selector) ||
+		(await resolved.locator.getAttribute("type").catch(() => null)) === "password";
+	const recordedText = isPassword ? "•".repeat(Math.min(value.length, 8)) : value;
+
 	const ctx = await capturePageContext(page);
 	trace.events.push({
 		tMs,
@@ -229,7 +236,7 @@ export async function traceFill(
 		selector,
 		role: info.role,
 		computedCursor: info.computedCursor,
-		text: value,
+		text: recordedText,
 		scroll: info.scroll,
 		viewport: info.viewport,
 		url: ctx.url,

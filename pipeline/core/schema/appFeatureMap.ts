@@ -31,6 +31,8 @@ export interface AppFeatureMap {
   primaryFlows: string[][];
   /** True if any feature requires authentication */
   authNeeded: boolean;
+  /** URL where the crawl successfully logged in (set at crawl time, if creds given) */
+  loginUrl?: string;
   /** App type hint used by saliency for cursor styling */
   appVibe?: string;
 }

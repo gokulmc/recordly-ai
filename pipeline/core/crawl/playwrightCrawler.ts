@@ -195,8 +195,9 @@ export async function crawlAndEnrich(
   }
 
   // Attempt login if credentials provided
+  let loginUrl: string | null = null;
   if (opts.authEmail && opts.authPassword) {
-    await attemptLogin(page, productionUrl, opts.authEmail, opts.authPassword);
+    loginUrl = await attemptLogin(page, productionUrl, opts.authEmail, opts.authPassword);
   }
 
   const updatedFeatures: AppFeature[] = [];
@@ -209,7 +210,7 @@ export async function crawlAndEnrich(
   await context.close();
   await browser.close();
 
-  return { ...featureMap, features: updatedFeatures };
+  return { ...featureMap, features: updatedFeatures, ...(loginUrl ? { loginUrl } : {}) };
 }
 
 /** Try to log in by looking for email/password fields on the current page or /login /signin. */
@@ -218,7 +219,7 @@ async function attemptLogin(
   productionUrl: string,
   email: string,
   password: string,
-): Promise<void> {
+): Promise<string | null> {
   console.log("  [crawl] attempting login …");
 
   // Try known sign-in paths
@@ -229,7 +230,7 @@ async function attemptLogin(
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: 10_000 });
       await page.waitForTimeout(1500);
       // Check if we landed on a login form (may redirect to Cognito hosted UI)
-      const currentUrl = page.url();
+      const formUrl = page.url();
       const hasEmailField = await page.locator('input[type="email"], input[name="email"], input[name="username"]').first().isVisible({ timeout: 2000 }).catch(() => false);
       if (hasEmailField) {
         await page.locator('input[type="email"], input[name="email"], input[name="username"]').first().fill(email);
@@ -240,8 +241,8 @@ async function attemptLogin(
           await page.waitForTimeout(300);
           await page.keyboard.press("Enter");
           await page.waitForTimeout(3000);
-          console.log(`  [crawl] login submitted at ${currentUrl} → ${page.url()}`);
-          return;
+          console.log(`  [crawl] login submitted at ${formUrl} → ${page.url()}`);
+          return formUrl;
         }
       }
     } catch { /* try next path */ }
@@ -254,14 +255,16 @@ async function attemptLogin(
     if (visible) {
       await loginBtn.click();
       await page.waitForTimeout(2000);
+      const formUrl = page.url();
       await page.locator('input[type="email"], input[name="email"], input[name="username"]').first().fill(email).catch(() => {});
       await page.locator('input[type="password"]').first().fill(password).catch(() => {});
       await page.keyboard.press("Enter");
       await page.waitForTimeout(3000);
       console.log(`  [crawl] login submitted via button → ${page.url()}`);
-      return;
+      return formUrl;
     }
   } catch { /* skip */ }
 
   console.warn("  [crawl] could not find login form — crawling as anonymous");
+  return null;
 }
