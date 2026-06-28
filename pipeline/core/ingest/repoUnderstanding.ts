@@ -99,7 +99,66 @@ function collectFiles(repoPath: string): Array<{ relPath: string; content: strin
       } catch { /* skip unreadable */ }
     }
   }
+
+  // Auth-signal files are the strongest evidence of whether the app gates
+  // content behind login: framework middleware, auth config/modules, and env
+  // templates (which name the provider: NextAuth/Clerk/Cognito/Supabase…).
+  // Search recursively — monorepos keep these under apps/<x>/src, not the root.
+  for (const { relPath, content } of findAuthSignalFiles(repoPath, seen)) {
+    files.push({ relPath, content });
+  }
   return files;
+}
+
+/** True if a file's path/name is strong evidence of auth in the app. */
+function isAuthSignalFile(relPath: string): boolean {
+  const base = path.basename(relPath).toLowerCase();
+  const lower = relPath.toLowerCase();
+  if (/^middleware\.(ts|js|tsx|jsx)$/.test(base)) return true;
+  if (/^auth(\.config)?\.(ts|tsx|js|jsx)$/.test(base)) return true;
+  if (/^\.env.*\.(example|sample|template)$/.test(base) || /^\.env\.(example|sample|template)$/.test(base)) return true;
+  // an auth route/module directory (but not test files)
+  if (/(^|\/)auth(\/|$)/.test(lower) && !/\.(spec|test)\./.test(lower)) return true;
+  return false;
+}
+
+/** Recursively collect up to a handful of auth-signal files (env values stripped). */
+function findAuthSignalFiles(
+  repoPath: string,
+  seen: Set<string>,
+  maxFiles = 6,
+): Array<{ relPath: string; content: string }> {
+  const out: Array<{ relPath: string; content: string }> = [];
+  const SKIP = new Set(["node_modules", ".git", "dist", "build", ".next", "coverage"]);
+
+  const walk = (dir: string, depth: number) => {
+    if (out.length >= maxFiles || depth > 6) return;
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (out.length >= maxFiles) break;
+      if (e.name.startsWith(".") && !e.name.startsWith(".env")) continue;
+      if (SKIP.has(e.name)) continue;
+      const abs = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        walk(abs, depth + 1);
+      } else if (e.isFile()) {
+        const rel = path.relative(repoPath, abs);
+        if (seen.has(abs) || !isAuthSignalFile(rel)) continue;
+        seen.add(abs);
+        try {
+          let raw = fs.readFileSync(abs, "utf8");
+          if (path.basename(rel).startsWith(".env")) {
+            // keep only KEY names — never the secret values
+            raw = raw.split("\n").map((l) => l.replace(/=.*/, "=")).join("\n");
+          }
+          out.push({ relPath: rel, content: raw.slice(0, MAX_FILE_CHARS) });
+        } catch { /* skip unreadable */ }
+      }
+    }
+  };
+  walk(repoPath, 0);
+  return out;
 }
 
 // ── Summarisation ──────────────────────────────────────────────────────────────
@@ -140,6 +199,42 @@ const FEATURE_MAP_SCHEMA = `{
   "authNeeded": "boolean",
   "appVibe": "consumer|productivity|dev-tool|creative|research"
 }`;
+
+/**
+ * Deterministic auth detection from the collected files. The LLM is unreliable
+ * here — it anchors on a public landing page and reports authNeeded:false even
+ * when the app clearly gates features. A hard signal overrides that.
+ */
+function detectAuthSignal(
+  files: Array<{ relPath: string; content: string }>,
+): { detected: boolean; reason?: string } {
+  const AUTH_DEPS =
+    /(next-auth|@auth\/core|@clerk\/|@auth0\/|aws-amplify|amazon-cognito|@supabase\/auth|firebase\/auth|passport|lucia-auth|"lucia"|better-auth|@workos|stytch|supertokens)/i;
+  const ENV_AUTH_KEYS =
+    /\b(COGNITO|CLERK|NEXTAUTH|AUTH0|SUPABASE_(?:URL|ANON|SERVICE)|FIREBASE_(?:API|AUTH)|OAUTH|JWT_SECRET|SESSION_SECRET|AUTH_SECRET|IDENTITY_POOL|USER_POOL)\b/i;
+  const MIDDLEWARE_AUTH =
+    /(withAuth|getToken|getServerSession|auth\(\)|isAuthenticated|requireAuth|redirect\([^)]*(login|signin|sign-in)|clerkMiddleware|authMiddleware)/i;
+
+  for (const f of files) {
+    const base = f.relPath.split("/").pop()?.toLowerCase() ?? "";
+    if (/^auth(\.config)?\.(ts|tsx|js|jsx)$/.test(base)) {
+      return { detected: true, reason: `auth module ${f.relPath}` };
+    }
+    if (/^middleware\./.test(base) && MIDDLEWARE_AUTH.test(f.content)) {
+      return { detected: true, reason: `auth in ${f.relPath}` };
+    }
+    if (base.startsWith(".env") && ENV_AUTH_KEYS.test(f.content)) {
+      return { detected: true, reason: `auth keys in ${f.relPath}` };
+    }
+    if (base === "package.json" && AUTH_DEPS.test(f.content)) {
+      return { detected: true, reason: "auth dependency in package.json" };
+    }
+    if (/(^|\/)auth(\/|$)/.test(f.relPath.toLowerCase()) && !/\.(spec|test)\./.test(f.relPath.toLowerCase())) {
+      return { detected: true, reason: `auth route/module ${f.relPath}` };
+    }
+  }
+  return { detected: false };
+}
 
 // ── Public API ─────────────────────────────────────────────────────────────────
 
@@ -187,7 +282,7 @@ Rules:
 - likelySelectors: guess CSS selectors or role-based selectors (e.g. button[data-testid="submit"]).
 - suggestedFlow: 2-5 concrete Playwright-style steps (click X, type Y, press Enter).
 - Sort features by importance desc (5 = must show, 1 = optional).
-- authNeeded: true only if the core demo flow requires login.
+- authNeeded: set TRUE if the repo shows ANY sign that core features sit behind login — e.g. framework middleware guarding routes (middleware.ts redirecting unauthenticated users), a login/signin page or /api/auth route, session/JWT/cookie checks, an auth provider in deps or .env (NextAuth, Clerk, Auth0, Cognito, Supabase Auth, Firebase Auth), protected API handlers returning 401/redirect, or server actions gated by getSession()/auth(). Set FALSE only when the app is clearly fully public (no login UI, no protected routes, no auth provider). When unsure, prefer TRUE.
 - appVibe: pick one of consumer|productivity|dev-tool|creative|research.
 
 REPO FILES:
@@ -200,5 +295,13 @@ ${context}`;
 
   const parsed = parseJson<AppFeatureMap>(raw);
   console.log(`  [ingest] found ${parsed.features?.length ?? 0} features: ${(parsed.features ?? []).map((f) => f.name).join(", ")}`);
+
+  // Deterministic auth override — trust hard repo evidence over the LLM's guess.
+  const authSignal = detectAuthSignal(files);
+  if (authSignal.detected && !parsed.authNeeded) {
+    console.log(`  [ingest] authNeeded forced true (${authSignal.reason})`);
+    parsed.authNeeded = true;
+  }
+
   return parsed;
 }
