@@ -165,6 +165,17 @@ let activePipeline: ActivePipeline | null = null;
 
 // ── Pipeline CLI resolution (dev vs prod) ─────────────────────────────────────
 
+/**
+ * Repo/app root. main.ts sets process.env.APP_ROOT = dirname(main) + "..".
+ * The main process is bundled to dist-electron/main.cjs, so __dirname at
+ * runtime is dist-electron — NOT this source file's directory. Anchor on
+ * APP_ROOT instead so the pipeline path is correct in dev and packaged builds.
+ */
+function getPipelineRoot(): string {
+	const appRoot = process.env.APP_ROOT ?? path.resolve(__dirname, "..");
+	return path.join(appRoot, "pipeline");
+}
+
 interface PipelineForkTarget {
 	modulePath: string;
 	/** Node-compatible executable to run the child with. */
@@ -188,7 +199,7 @@ interface PipelineForkTarget {
  *   - Dev:  run `pipeline/cli.ts` with the tsx ESM loader via `--import`.
  */
 function resolvePipelineForkTarget(): PipelineForkTarget {
-	const pipelineRoot = path.resolve(__dirname, "../../../pipeline");
+	const pipelineRoot = getPipelineRoot();
 	const baseEnv = { ELECTRON_RUN_AS_NODE: "1" };
 
 	const compiledCli = path.join(pipelineRoot, "dist/cli.js");
@@ -231,7 +242,7 @@ export function forkPipelineChild(
 	}
 
 	const { modulePath: pipelineCliPath, execPath, execArgv, extraEnv } = resolvePipelineForkTarget();
-	const pipelineRoot = path.resolve(__dirname, "../../../pipeline");
+	const pipelineRoot = getPipelineRoot();
 
 	const child = fork(pipelineCliPath, [], {
 		cwd: pipelineRoot,
@@ -307,7 +318,7 @@ function forkPhasedChild(
 	}
 
 	const { modulePath: pipelineCliPath, execPath, execArgv, extraEnv } = resolvePipelineForkTarget();
-	const pipelineRoot = path.resolve(__dirname, "../../../pipeline");
+	const pipelineRoot = getPipelineRoot();
 
 	const relay = (msg: unknown) => {
 		if (!rendererContents.isDestroyed()) {
