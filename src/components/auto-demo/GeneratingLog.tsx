@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { CheckCircleIcon, CircleNotchIcon } from "@phosphor-icons/react";
+import { CheckCircleIcon, CircleNotchIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import type { StageState } from "./useAutoDemoStore";
 
 // Stages relevant to the generate-script phase only
@@ -13,6 +13,7 @@ const SCRIPT_STAGES: Array<{ id: string; label: string }> = [
 interface Props {
   stages: StageState[];
   logLines: string[];
+  errorMessage?: string | null;
 }
 
 function StagePill({ stage, status }: { stage: string; status: "pending" | "running" | "done" | "error" }) {
@@ -59,7 +60,7 @@ function ConnectorDot({ done }: { done: boolean }) {
   );
 }
 
-export function GeneratingLog({ stages, logLines }: Props) {
+export function GeneratingLog({ stages, logLines, errorMessage }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -129,13 +130,13 @@ export function GeneratingLog({ stages, logLines }: Props) {
             gap: 1,
           }}
         >
-          {logLines.length === 0 ? (
+          {logLines.length === 0 && !errorMessage ? (
             <span style={{ fontSize: 12, color: "var(--launch-label)", fontStyle: "italic", fontFamily: "monospace" }}>
               Initialising…
             </span>
           ) : (
             logLines.map((line, i) => {
-              const isLast = i === logLines.length - 1;
+              const isLast = i === logLines.length - 1 && !errorMessage;
               return (
                 <div key={i} style={{
                   fontSize: 11.5,
@@ -162,6 +163,31 @@ export function GeneratingLog({ stages, logLines }: Props) {
                 </div>
               );
             })
+          )}
+
+          {errorMessage && (
+            <div style={{
+              marginTop: logLines.length ? 8 : 0,
+              padding: "8px 10px",
+              borderRadius: 8,
+              background: "rgba(220,38,38,0.06)",
+              border: "1px solid rgba(220,38,38,0.2)",
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 7,
+            }}>
+              <WarningCircleIcon size={14} weight="fill" style={{ color: "#dc2626", flexShrink: 0, marginTop: 1 }} />
+              <span style={{
+                fontSize: 11.5,
+                lineHeight: 1.5,
+                color: "#991b1b",
+                fontFamily: "'Roboto Mono', 'SF Mono', monospace",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}>
+                {errorMessage}
+              </span>
+            </div>
           )}
         </div>
 

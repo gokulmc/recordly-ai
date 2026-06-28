@@ -187,6 +187,7 @@ export function AutoDemoPopover({ trigger, onRunningChange }: Props) {
                 onGenerate={() => void handleGenerate()}
                 stages={stages}
                 logLines={logLines}
+                errorMessage={errorMessage}
                 styles={styles}
               />
             </motion.div>

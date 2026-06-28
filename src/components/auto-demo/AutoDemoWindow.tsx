@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { useAutoDemoStore } from "./useAutoDemoStore";
+import { useAutoDemoStore, initialStages } from "./useAutoDemoStore";
 import { Step1Inputs } from "./steps/Step1Inputs";
 import { Step2Script } from "./steps/Step2Script";
 import { Step3Progress } from "./steps/Step3Progress";
@@ -34,19 +34,22 @@ export function AutoDemoWindow() {
     repoStatus, setRepoStatus,
     githubPat, setGithubPat,
     featureMap, script,
-    stages, errorMessage, projectPath,
+    stages, setStages, errorMessage, setErrorMessage, projectPath,
     isGenerating, setIsGenerating,
     isRecording, setIsRecording,
     isRendering, setIsRendering,
     savedConfigs, loadConfig, deleteConfig, saveConfig,
     reset,
     rawVideoPath, traceJsonPath,
-    logLines,
+    logLines, setLogLines,
   } = store;
 
   // ── Step 1: generate script ───────────────────────────────────────────────
 
   const handleGenerate = async () => {
+    setErrorMessage(null);
+    setLogLines([]);
+    setStages(initialStages());
     setIsGenerating(true);
     saveConfig(formValues);
     try {
@@ -180,6 +183,7 @@ export function AutoDemoWindow() {
                 onGenerate={() => void handleGenerate()}
                 stages={stages}
                 logLines={logLines}
+                errorMessage={errorMessage}
                 styles={styles}
               />
             </motion.div>

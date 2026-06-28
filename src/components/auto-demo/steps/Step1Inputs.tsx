@@ -80,6 +80,7 @@ interface Props {
   onGenerate: () => void;
   stages: StageState[];
   logLines: string[];
+  errorMessage: string | null;
   styles: Record<string, string>;
 }
 
@@ -97,6 +98,7 @@ export function Step1Inputs({
   onGenerate,
   stages,
   logLines,
+  errorMessage,
   styles,
 }: Props) {
   const [showRecents, setShowRecents] = useState(false);
@@ -326,8 +328,8 @@ export function Step1Inputs({
           )}
         </button>
 
-        {isGenerating && (
-          <GeneratingLog stages={stages} logLines={logLines} />
+        {(isGenerating || errorMessage) && (
+          <GeneratingLog stages={stages} logLines={logLines} errorMessage={errorMessage} />
         )}
       </div>
     </div>
