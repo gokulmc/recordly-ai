@@ -18,6 +18,7 @@ import path from "node:path";
 import { record } from "./core/record/recorder.js";
 import { deriveZoomRegions } from "./core/derive/zoomDeriver.js";
 import { deriveCursorTelemetry } from "./core/derive/cursorDeriver.js";
+import { applySaliency } from "./core/derive/saliency.js";
 import { buildProject } from "./core/assemble/projectBuilder.js";
 
 const TARGET_URL = "https://forkai.in";
@@ -95,8 +96,17 @@ console.log(`✓  derived   ${zoomRegions.length} zoom region(s)`);
 const { samples, cursorVisual } = deriveCursorTelemetry(result.trace);
 console.log(`✓  cursor    ${samples.length} samples, style=${cursorVisual.style}`);
 
-// M4 stub: LLM saliency would filter/adjust zoomRegions here
-// if (USE_LLM) { zoomRegions = await applySaliency(result.trace, zoomRegions); }
+// M4: LLM saliency — re-derive zoom regions with LLM-guided saliency resolver
+let cursorVisualOverride = cursorVisual;
+if (USE_LLM) {
+  console.log("  calling DeepSeek for saliency …");
+  const llm = await applySaliency(result.trace, TARGET_URL);
+  const { regions: llmRegions } = deriveZoomRegions(result.trace, { saliency: llm.saliency });
+  zoomRegions.length = 0;
+  zoomRegions.push(...llmRegions);
+  cursorVisualOverride = llm.cursorVisual;
+  console.log(`✓  LLM      ${zoomRegions.length} zoom region(s) after saliency`);
+}
 
 // M5 stub: repo script gen would replace the hardcoded steps above
 // if (REPO_URL) { /* rerun with generated DemoStep[] */ }
@@ -106,7 +116,7 @@ const project = await buildProject({
   videoPath: result.videoPath,
   zoomRegions,
   samples,
-  cursorVisual,
+  cursorVisual: cursorVisualOverride,
   outDir: OUT_DIR,
 });
 
