@@ -58,6 +58,7 @@ export function AutoDemoWindow() {
         productionUrl: formValues.productionUrl.trim(),
         authEmail: formValues.authEmail.trim() || undefined,
         authPassword: formValues.authPassword || undefined,
+        githubToken: githubPat.trim() || undefined,
         focusArea: formValues.query.trim() || undefined,
       });
     } catch (err) {
@@ -118,6 +119,7 @@ export function AutoDemoWindow() {
         productionUrl: formValues.productionUrl.trim(),
         authEmail: formValues.authEmail.trim() || undefined,
         authPassword: formValues.authPassword || undefined,
+        githubToken: githubPat.trim() || undefined,
         focusArea: `${formValues.query.trim()} ${refinement}`.trim() || undefined,
       });
     } catch (err) {

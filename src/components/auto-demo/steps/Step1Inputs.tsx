@@ -131,7 +131,9 @@ export function Step1Inputs({
     }
   };
 
-  const isReady = formValues.repoUrl.trim() && formValues.productionUrl.trim() && repoStatus !== "needs-pat";
+  // A private repo needs a PAT before we can clone it.
+  const patSatisfied = repoStatus !== "needs-pat" || githubPat.trim().length > 0;
+  const isReady = Boolean(formValues.repoUrl.trim() && formValues.productionUrl.trim() && patSatisfied);
 
   return (
     <div style={{ padding: "4px 0 0" }}>

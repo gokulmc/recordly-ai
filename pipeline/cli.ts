@@ -36,6 +36,7 @@ const repoUrl = process.env.PIPELINE_REPO_URL ?? "";
 const productionUrl = process.env.PIPELINE_PRODUCTION_URL ?? "";
 const authEmail = process.env.PIPELINE_AUTH_EMAIL;
 const authPassword = process.env.PIPELINE_AUTH_PASSWORD;
+const githubToken = process.env.PIPELINE_GITHUB_TOKEN || undefined;
 const focusArea = process.env.PIPELINE_FOCUS_AREA;
 const outDir = process.env.PIPELINE_OUT_DIR;
 
@@ -48,7 +49,7 @@ async function main() {
   switch (phase) {
     case "generate-script": {
       if (!repoUrl || !productionUrl) fail("PIPELINE_REPO_URL and PIPELINE_PRODUCTION_URL are required");
-      const result = await generateScriptPhase({ repoUrl, productionUrl, authEmail, authPassword, focusArea }, send);
+      const result = await generateScriptPhase({ repoUrl, productionUrl, authEmail, authPassword, githubToken, focusArea }, send);
       if (process.send) process.send({ type: "phase-result", result });
       break;
     }
@@ -73,7 +74,7 @@ async function main() {
 
     default: {
       if (!repoUrl || !productionUrl) fail("PIPELINE_REPO_URL and PIPELINE_PRODUCTION_URL are required");
-      await runPipeline({ repoUrl, productionUrl, authEmail, authPassword, focusArea, outDir, useLlm: true }, send);
+      await runPipeline({ repoUrl, productionUrl, authEmail, authPassword, githubToken, focusArea, outDir, useLlm: true }, send);
       break;
     }
   }

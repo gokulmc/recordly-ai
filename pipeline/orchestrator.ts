@@ -29,6 +29,8 @@ export interface ScriptGenOpts {
   productionUrl: string;
   authEmail?: string;
   authPassword?: string;
+  /** GitHub PAT for cloning a private repo */
+  githubToken?: string;
   /** Natural-language description of which features/flows to prioritise */
   focusArea?: string;
 }
@@ -65,7 +67,7 @@ export async function generateScriptPhase(
 ): Promise<ScriptGenResult> {
   send({ type: "stage", stageId: "ingest", status: "running", message: "Reading repo …" });
 
-  const { repoPath } = await cloneRepo(opts.repoUrl);
+  const { repoPath } = await cloneRepo(opts.repoUrl, { githubToken: opts.githubToken });
   const featureMap = await understandRepo(repoPath);
 
   send({

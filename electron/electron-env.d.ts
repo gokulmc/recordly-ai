@@ -964,6 +964,7 @@ interface Window {
 			productionUrl: string;
 			authEmail?: string;
 			authPassword?: string;
+			githubToken?: string;
 			focusArea?: string;
 		}) => Promise<{ success: boolean }>;
 		autoDemoRecord: (opts: {

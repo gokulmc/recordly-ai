@@ -26,7 +26,7 @@ export interface RepoLoaderResult {
  */
 export async function cloneRepo(
   repoUrl: string,
-  opts: { force?: boolean; tmpDir?: string } = {},
+  opts: { force?: boolean; tmpDir?: string; githubToken?: string } = {},
 ): Promise<RepoLoaderResult> {
   // Local path shortcut — no clone needed
   const expanded = repoUrl.startsWith("~")
@@ -57,8 +57,15 @@ export async function cloneRepo(
     }
   }
 
+  // For private GitHub HTTPS repos, inject the PAT into the clone URL. Never
+  // log the tokenised URL.
+  let cloneUrl = repoUrl;
+  if (opts.githubToken && /^https:\/\/github\.com\//i.test(repoUrl)) {
+    cloneUrl = repoUrl.replace(/^https:\/\//i, `https://x-access-token:${opts.githubToken}@`);
+  }
+
   console.log(`  [repo] cloning ${repoUrl} → ${repoPath}`);
-  execSync(`git clone --depth 1 "${repoUrl}" "${repoPath}"`, {
+  execSync(`git clone --depth 1 "${cloneUrl}" "${repoPath}"`, {
     stdio: ["ignore", "pipe", "pipe"],
   });
   console.log(`  [repo] done`);

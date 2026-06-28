@@ -38,7 +38,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { desktopCapturer, ipcMain, type WebContents } from "electron";
-import { openVideoReviewWindow, closeVideoReviewWindow, getHudOverlayWindow, createAutoDemoWindow } from "../../windows";
+import { openVideoReviewWindow, closeVideoReviewWindow, getHudOverlayWindow, getAutoDemoWindow, createAutoDemoWindow } from "../../windows";
 import { rememberApprovedLocalReadPath } from "../project/manager";
 import {
 	nativeScreenRecordingActive,
@@ -327,8 +327,15 @@ function forkPhasedChild(
 		}
 	};
 
-	// Surface the first heartbeat immediately so the UI leaves "Initialising…"
-	relay({ type: "stage", stageId: "ingest", status: "running", message: "Starting pipeline …" });
+	// Surface the first heartbeat immediately so the UI leaves "Initialising…".
+	// Use the first real stage of the phase so the right stage row lights up.
+	const HEARTBEAT_STAGE: Record<string, string> = {
+		"generate-script": "ingest",
+		record: "record",
+		render: "derive",
+	};
+	const heartbeatStage = HEARTBEAT_STAGE[phase] ?? "ingest";
+	relay({ type: "stage", stageId: heartbeatStage, status: "running", message: "Starting pipeline …" });
 
 	let child: ReturnType<typeof fork>;
 	try {
@@ -444,6 +451,7 @@ export function registerAutoDemoHandlers(): void {
 			productionUrl: string;
 			authEmail?: string;
 			authPassword?: string;
+			githubToken?: string;
 			focusArea?: string;
 		}) => {
 			forkPhasedChild(
@@ -453,6 +461,7 @@ export function registerAutoDemoHandlers(): void {
 					PIPELINE_PRODUCTION_URL: opts.productionUrl,
 					...(opts.authEmail ? { PIPELINE_AUTH_EMAIL: opts.authEmail } : {}),
 					...(opts.authPassword ? { PIPELINE_AUTH_PASSWORD: opts.authPassword } : {}),
+					...(opts.githubToken ? { PIPELINE_GITHUB_TOKEN: opts.githubToken } : {}),
 					...(opts.focusArea ? { PIPELINE_FOCUS_AREA: opts.focusArea } : {}),
 				},
 				event.sender,
@@ -513,12 +522,13 @@ export function registerAutoDemoHandlers(): void {
 		closeVideoReviewWindow();
 	});
 
-	// User decision from the video-review window — relay to the HUD overlay
+	// User decision from the video-review window — relay to the Auto Demo window
+	// (which mounts useAutoDemoStore and listens for "video-review:decision").
 	ipcMain.on("video-review:user-decision", (_event, decision: "approve" | "modify") => {
 		closeVideoReviewWindow();
-		const hud = getHudOverlayWindow();
-		if (hud && !hud.isDestroyed()) {
-			hud.webContents.send("video-review:decision", decision);
+		const target = getAutoDemoWindow() ?? getHudOverlayWindow();
+		if (target && !target.isDestroyed()) {
+			target.webContents.send("video-review:decision", decision);
 		}
 	});
 }
