@@ -89,8 +89,14 @@ async function findSourceByWindowTitle(
 			fetchWindowIcons: false,
 		});
 		type Src = { name: string; id: string; appName: string; windowTitle?: string };
+		// Chromium window names may be the bare document.title or include a suffix
+		// (" - Chromium"), so match by substring as well as exact.
 		const match = (sources as unknown as Src[]).find(
-			(s) => s.name === title || s.windowTitle === title,
+			(s) =>
+				s.name === title ||
+				s.windowTitle === title ||
+				s.name?.includes(title) ||
+				s.windowTitle?.includes(title),
 		);
 		if (match) {
 			return {

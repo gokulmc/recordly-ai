@@ -160,13 +160,9 @@ async function recordDualTrack(
 		onMessage: config.nativeOpts.onMessage,
 	});
 
-	// Start native capture first so it records from frame-0. The started response
-	// carries the real captured-source pixel dimensions.
-	const started = await nativeBackend.start();
-	const srcW = config.sourceFrameWidth ?? (started.sourceWidth > 0 ? started.sourceWidth : vw);
-	const srcH = config.sourceFrameHeight ?? (started.sourceHeight > 0 ? started.sourceHeight : vh);
-
-	// Start Playwright (headed, non-recording — native backend provides the pixels)
+	// Launch Playwright FIRST so the browser window exists and carries our unique
+	// title BEFORE native capture searches for it by title. (Native capture keys
+	// on the resolved windowId, so later navigations changing the title are fine.)
 	const { chromium } = await import("playwright");
 	const browser = await chromium.launch({ headless: false });
 	const context = await browser.newContext({
@@ -175,8 +171,18 @@ async function recordDualTrack(
 	});
 	const page = await context.newPage();
 
-	// Set the unique window title so Electron can identify the source
+	// Give the window a unique, stable title for source discovery, then let the
+	// OS window manager pick it up before we ask Electron to find the source.
+	await page.goto("about:blank");
 	await page.evaluate((title) => { document.title = title; }, config.windowTitle);
+	await page.bringToFront();
+	await page.waitForTimeout(800);
+
+	// Now start native capture — the window exists and is titled. The started
+	// response carries the real captured-source pixel dimensions.
+	const started = await nativeBackend.start();
+	const srcW = config.sourceFrameWidth ?? (started.sourceWidth > 0 ? started.sourceWidth : vw);
+	const srcH = config.sourceFrameHeight ?? (started.sourceHeight > 0 ? started.sourceHeight : vh);
 
 	const recordingStartMs = performance.now();
 
