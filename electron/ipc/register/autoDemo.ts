@@ -205,16 +205,23 @@ async function handleNativeCaptureStop(send: (resp: unknown) => void): Promise<v
 	}
 	try {
 		const videoPath = await new Promise<string>((resolve, reject) => {
-			const timer = setTimeout(() => reject(new Error("ScreenCaptureKit helper did not stop within 60s")), 60_000);
-			capture.proc.once("exit", (code) => {
-				clearTimeout(timer);
+			let settled = false;
+			const finish = (fn: () => void) => { if (!settled) { settled = true; fn(); } };
+			capture.proc.once("exit", (code) => finish(() => {
 				const match = capture.stdout.match(/Recording stopped\. Output path: (.+)/);
 				if (match?.[1]) return resolve(match[1].trim());
-				if (code === 0) return resolve(capture.outputPath);
+				// Even on a non-zero code, the mp4 is usually fully written — prefer it.
+				if (fs.existsSync(capture.outputPath)) return resolve(capture.outputPath);
 				reject(new Error(`helper exited with code ${code}: ${capture.stdout.slice(-300)}`));
-			});
-			// Ask the helper to finalize.
+			}));
+			// Ask the helper to finalize via stdin, escalating if it ignores us.
 			try { capture.proc.stdin.write("stop\n"); } catch { /* helper may already be closing */ }
+			setTimeout(() => { if (!settled) { try { capture.proc.kill("SIGINT"); } catch { /* ignore */ } } }, 12_000);
+			setTimeout(() => finish(() => {
+				try { capture.proc.kill("SIGKILL"); } catch { /* ignore */ }
+				if (fs.existsSync(capture.outputPath)) resolve(capture.outputPath);
+				else reject(new Error("ScreenCaptureKit helper did not stop and produced no file"));
+			}), 25_000);
 		});
 		send({ type: "native-capture:finished", videoPath });
 	} catch (err) {

@@ -206,11 +206,14 @@ async function recordDualTrack(
 
 	trace.totalMs = performance.now() - recordingStartMs;
 
-	await page.close();
-	await context.close();
-	await browser.close();
-
+	// Stop native capture BEFORE tearing down the browser. If we closed the
+	// window first, ScreenCaptureKit loses its capture target and the helper can
+	// hang/err at finalize.
 	const videoPath = await nativeBackend.finalize();
+
+	await page.close().catch(() => {});
+	await context.close().catch(() => {});
+	await browser.close().catch(() => {});
 
 	// Post-solve: now that the native video is finalized, extract frames at each
 	// segment's beacon timestamp and solve the true affine M from fiducial detections.

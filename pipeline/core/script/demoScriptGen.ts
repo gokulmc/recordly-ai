@@ -67,8 +67,10 @@ function buildLoginSteps(
 ): DemoStep[] {
   const captured = featureMap.loginSelectors;
   const loginUrl = captured?.url ?? featureMap.loginUrl ?? new URL("/login", productionUrl).href;
-  const emailSel = captured?.emailSelector ?? 'input[type="email"], input[name="email"], input[name="username"]';
-  const passSel = captured?.passwordSelector ?? 'input[type="password"]';
+  const emailSel = captured?.emailSelector
+    ?? 'input[type="email"], input[name="email"], input[name="username"], #signInFormUsername, input[autocomplete="username"]';
+  const passSel = captured?.passwordSelector
+    ?? 'input[type="password"], input[name="password"], #signInFormPassword';
 
   const steps: DemoStep[] = [
     { action: "navigate", url: loginUrl, narration: `Signing in to ${featureMap.appName}.`, phase: "login" },

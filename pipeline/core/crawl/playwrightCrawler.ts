@@ -223,11 +223,18 @@ const EMAIL_SELECTORS = [
   'input[name="username"]',
   'input[autocomplete="username"]',
   'input[id*="email" i]',
+  // AWS Cognito hosted UI
+  '#signInFormUsername',
+  'input[id="signInFormUsername"]',
+  'input[id*="username" i]',
 ];
 const PASSWORD_SELECTORS = [
   'input[type="password"]',
   'input[name="password"]',
   'input[autocomplete="current-password"]',
+  // AWS Cognito hosted UI
+  '#signInFormPassword',
+  'input[id*="password" i]',
 ];
 const NEXT_SELECTORS = [
   'button:has-text("Next")',
@@ -300,12 +307,20 @@ async function attemptLogin(
     } catch { /* try next path */ }
   }
 
-  // 2. Fallback: click a Login/Sign in control on the current page.
+  // 2. Fallback: click a Login/Sign in control on the home page (it often
+  //    redirects to a hosted auth UI like Cognito on another domain).
   try {
-    const loginBtn = page.locator('button:has-text("Login"), a:has-text("Login"), button:has-text("Sign in"), a:has-text("Sign in")').first();
-    if (await loginBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await loginBtn.click();
-      await page.waitForTimeout(2000);
+    await page.goto(productionUrl, { waitUntil: "domcontentloaded", timeout: 10_000 }).catch(() => {});
+    const loginBtn = page
+      .locator('button:has-text("Login"), a:has-text("Login"), button:has-text("Sign in"), a:has-text("Sign in"), button:has-text("Log in"), a:has-text("Get started")')
+      .first();
+    if (await loginBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await loginBtn.click().catch(() => {});
+      // Wait for the (possibly cross-origin) auth page to settle.
+      await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
+      await page.waitForTimeout(1500);
+      // The email field may take a moment to render on the hosted UI.
+      await firstVisibleSelector(page, EMAIL_SELECTORS, 4000);
       const result = await tryForm(page.url());
       if (result) return result;
     }
