@@ -861,6 +861,9 @@ interface Window {
 		saveShortcuts: (shortcuts: unknown) => Promise<{ success: boolean; error?: string }>;
 		getAppSetting: (key: string) => unknown;
 		setAppSetting: (key: string, value: unknown) => boolean;
+		secureStoreSet: (key: string, value: string) => boolean;
+		secureStoreGet: (key: string) => string | null;
+		secureStoreDelete: (key: string) => boolean;
 		setHasUnsavedChanges: (hasChanges: boolean) => void;
 		onRequestSaveBeforeClose: (callback: () => Promise<boolean>) => () => void;
 		isNativeWindowsCaptureAvailable: () => Promise<{ available: boolean }>;

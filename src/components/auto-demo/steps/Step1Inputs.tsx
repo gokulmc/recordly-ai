@@ -192,6 +192,9 @@ export function Step1Inputs({
                     <div style={{ fontSize: 14, color: "var(--launch-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cfg.label}</div>
                     <div style={{ fontSize: 13, color: "var(--launch-label)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cfg.productionUrl}</div>
                   </div>
+                  {cfg.hasStoredPassword && (
+                    <LockKeyIcon size={13} weight="fill" style={{ color: "#059669", flexShrink: 0 }} aria-label="Password saved in keychain" />
+                  )}
                   <span
                     style={{ color: "var(--launch-label)", padding: 2, borderRadius: 4, flexShrink: 0 }}
                     onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onDeleteConfig(cfg.id); }}

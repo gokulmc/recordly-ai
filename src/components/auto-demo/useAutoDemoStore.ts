@@ -54,6 +54,13 @@ export interface AutoDemoConfig {
   authEmail?: string;
   query?: string;
   lastUsed: number;
+  /** True if a demo password is stored in the OS keychain for this config */
+  hasStoredPassword?: boolean;
+}
+
+/** Keychain key for a config's demo password. */
+function passwordKey(id: string): string {
+  return `autodemo-pw:${id}`;
 }
 
 export interface FormValues {
@@ -135,33 +142,48 @@ export function useAutoDemoStore() {
     setFormValues((prev) => ({ ...prev, [key]: value }));
   }, []);
 
+  // Persist the demo password to the OS keychain (encrypted), keyed by config id.
+  const persistPassword = useCallback((id: string, password: string) => {
+    if (password) {
+      const ok = window.electronAPI?.secureStoreSet?.(passwordKey(id), password) ?? false;
+      return ok;
+    }
+    window.electronAPI?.secureStoreDelete?.(passwordKey(id));
+    return false;
+  }, []);
+
   const saveConfig = useCallback((form: FormValues) => {
     const existing = loadAppSetting<AutoDemoConfig[]>("autoDemoConfigs") ?? [];
     const duplicate = existing.find((c) => c.repoUrl === form.repoUrl && c.productionUrl === form.productionUrl);
     if (duplicate) {
+      const stored = persistPassword(duplicate.id, form.authPassword);
       const updated = existing.map((c) =>
-        c.id === duplicate.id ? { ...c, query: form.query, authEmail: form.authEmail, lastUsed: Date.now() } : c,
+        c.id === duplicate.id ? { ...c, query: form.query, authEmail: form.authEmail, hasStoredPassword: stored, lastUsed: Date.now() } : c,
       );
       saveAppSetting("autoDemoConfigs", updated);
       setSavedConfigs(updated);
       return;
     }
     const label = form.repoUrl.split("/").slice(-1)[0] ?? form.repoUrl;
+    const id = generateId();
+    const stored = persistPassword(id, form.authPassword);
     const newConfig: AutoDemoConfig = {
-      id: generateId(),
+      id,
       label,
       repoUrl: form.repoUrl,
       productionUrl: form.productionUrl,
       authEmail: form.authEmail || undefined,
       query: form.query,
       lastUsed: Date.now(),
+      hasStoredPassword: stored,
     };
     const updated = [newConfig, ...existing].slice(0, 5);
     saveAppSetting("autoDemoConfigs", updated);
     setSavedConfigs(updated);
-  }, []);
+  }, [persistPassword]);
 
   const deleteConfig = useCallback((id: string) => {
+    window.electronAPI?.secureStoreDelete?.(passwordKey(id));
     setSavedConfigs((prev) => {
       const updated = prev.filter((c) => c.id !== id);
       saveAppSetting("autoDemoConfigs", updated);
@@ -170,11 +192,15 @@ export function useAutoDemoStore() {
   }, []);
 
   const loadConfig = useCallback((config: AutoDemoConfig) => {
+    const storedPassword = config.hasStoredPassword
+      ? (window.electronAPI?.secureStoreGet?.(passwordKey(config.id)) ?? "")
+      : "";
     setFormValues((prev) => ({
       ...prev,
       repoUrl: config.repoUrl,
       productionUrl: config.productionUrl,
       authEmail: config.authEmail ?? "",
+      authPassword: storedPassword,
       query: config.query ?? DEFAULT_QUERY,
     }));
     setRepoStatus("unchecked");

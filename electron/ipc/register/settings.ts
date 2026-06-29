@@ -1,12 +1,13 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import fs from "node:fs/promises";
-import { app, ipcMain } from "electron";
+import { app, ipcMain, safeStorage } from "electron";
 import { hideCursor } from "../../cursorHider";
 import { closeCountdownWindow, createCountdownWindow, getCountdownWindow } from "../../windows";
 import {
 	APP_SETTINGS_FILE,
 	COUNTDOWN_SETTINGS_FILE,
 	RECORDINGS_SETTINGS_FILE,
+	SECURE_STORE_FILE,
 	SHORTCUTS_FILE,
 } from "../constants";
 import {
@@ -64,6 +65,24 @@ function hasAppSetting(store: Record<string, unknown>, key: string): boolean {
 	return Reflect.getOwnPropertyDescriptor(store, key) !== undefined;
 }
 
+// ── Secure secret store (OS keychain via safeStorage) ─────────────────────────
+// Values are encrypted with the OS keychain (macOS Keychain / Windows DPAPI /
+// libsecret) and stored as base64. The plaintext never touches disk or logs.
+
+function readSecureStore(): Record<string, string> {
+	try {
+		const parsed = JSON.parse(readFileSync(SECURE_STORE_FILE, "utf-8")) as unknown;
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+		return parsed as Record<string, string>;
+	} catch {
+		return {};
+	}
+}
+
+function writeSecureStore(store: Record<string, string>) {
+	writeFileSync(SECURE_STORE_FILE, JSON.stringify(store), { encoding: "utf-8", mode: 0o600 });
+}
+
 export function registerSettingsHandlers() {
 	ipcMain.handle("app:getVersion", () => {
 		return app.getVersion();
@@ -104,6 +123,65 @@ export function registerSettingsHandlers() {
 			event.returnValue = { success: true };
 		} catch (error) {
 			console.error("Failed to save app setting:", error);
+			event.returnValue = { success: false };
+		}
+	});
+
+	// Secure secret store — encrypts via the OS keychain. Sync to match the
+	// settings flow. Never logs the plaintext.
+	ipcMain.on("secure-store:set", (event, key: unknown, value: unknown) => {
+		try {
+			if (typeof key !== "string" || !key || typeof value !== "string") {
+				event.returnValue = { success: false };
+				return;
+			}
+			if (!safeStorage.isEncryptionAvailable()) {
+				event.returnValue = { success: false, error: "encryption-unavailable" };
+				return;
+			}
+			const store = readSecureStore();
+			store[key] = safeStorage.encryptString(value).toString("base64");
+			writeSecureStore(store);
+			event.returnValue = { success: true };
+		} catch (error) {
+			console.error("Failed to save secret (key hidden)");
+			void error;
+			event.returnValue = { success: false };
+		}
+	});
+
+	ipcMain.on("secure-store:get", (event, key: unknown) => {
+		try {
+			if (typeof key !== "string" || !key || !safeStorage.isEncryptionAvailable()) {
+				event.returnValue = { success: true, value: null };
+				return;
+			}
+			const store = readSecureStore();
+			const encrypted = store[key];
+			if (!encrypted) {
+				event.returnValue = { success: true, value: null };
+				return;
+			}
+			const value = safeStorage.decryptString(Buffer.from(encrypted, "base64"));
+			event.returnValue = { success: true, value };
+		} catch (error) {
+			console.error("Failed to read secret (key hidden)");
+			void error;
+			event.returnValue = { success: true, value: null };
+		}
+	});
+
+	ipcMain.on("secure-store:delete", (event, key: unknown) => {
+		try {
+			if (typeof key === "string" && key) {
+				const store = readSecureStore();
+				if (key in store) {
+					delete store[key];
+					writeSecureStore(store);
+				}
+			}
+			event.returnValue = { success: true };
+		} catch {
 			event.returnValue = { success: false };
 		}
 	});

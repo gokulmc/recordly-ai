@@ -941,6 +941,19 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		};
 		return result?.success === true;
 	},
+	// OS-keychain-encrypted secret store (e.g. demo passwords).
+	secureStoreSet: (key: string, value: string) => {
+		const result = ipcRenderer.sendSync("secure-store:set", key, value) as { success?: boolean };
+		return result?.success === true;
+	},
+	secureStoreGet: (key: string) => {
+		const result = ipcRenderer.sendSync("secure-store:get", key) as { success?: boolean; value?: string | null };
+		return result?.success ? (result.value ?? null) : null;
+	},
+	secureStoreDelete: (key: string) => {
+		const result = ipcRenderer.sendSync("secure-store:delete", key) as { success?: boolean };
+		return result?.success === true;
+	},
 	setHasUnsavedChanges: (hasChanges: boolean) => {
 		ipcRenderer.send("set-has-unsaved-changes", hasChanges);
 	},
