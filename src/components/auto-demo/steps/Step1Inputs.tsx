@@ -269,6 +269,12 @@ export function Step1Inputs({
                 placeholder="password"
                 disabled={isGenerating}
               />
+              <div style={{ display: "flex", alignItems: "center", gap: 5, color: "var(--launch-label)" }}>
+                <LockKeyIcon size={12} weight="fill" style={{ color: "#059669", flexShrink: 0 }} />
+                <span style={{ fontSize: 12, lineHeight: 1.4 }}>
+                  Stored securely in your device keychain — never saved in plaintext or the project.
+                </span>
+              </div>
             </div>
           )}
         </div>
