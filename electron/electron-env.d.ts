@@ -973,6 +973,7 @@ interface Window {
 		autoDemoRecord: (opts: {
 			scriptJson: string;
 			outDir?: string;
+			authStatePath?: string;
 		}) => Promise<{ success: boolean }>;
 		autoDemoRender: (opts: {
 			videoPath: string;

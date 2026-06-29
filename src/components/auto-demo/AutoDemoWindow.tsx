@@ -75,7 +75,10 @@ export function AutoDemoWindow() {
     setIsRecording(true);
     setStep(3);
     try {
-      await window.electronAPI?.autoDemoRecord?.({ scriptJson: JSON.stringify(script) });
+      await window.electronAPI?.autoDemoRecord?.({
+        scriptJson: JSON.stringify(script),
+        authStatePath: featureMap?.authStatePath,
+      });
     } catch (err) {
       setIsRecording(false);
       console.error("[AutoDemoWindow] record failed:", err);

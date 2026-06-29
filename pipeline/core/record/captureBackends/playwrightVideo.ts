@@ -27,6 +27,8 @@ export interface PlaywrightVideoOpts {
 	viewportWidth: number;
 	viewportHeight: number;
 	headless?: boolean;
+	/** Playwright storageState file to start the context already authenticated. */
+	storageState?: string;
 }
 
 /**
@@ -48,6 +50,7 @@ export async function startPlaywrightVideoRecording(
 			size: { width: opts.viewportWidth, height: opts.viewportHeight },
 		},
 		deviceScaleFactor: 1,
+		...(opts.storageState ? { storageState: opts.storageState } : {}),
 	});
 
 	const page = await context.newPage();

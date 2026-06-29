@@ -19,6 +19,7 @@ export interface AppFeatureMap {
   primaryFlows: string[][];
   authNeeded: boolean;
   loginUrl?: string;
+  authStatePath?: string;
 }
 
 export interface DemoStep {

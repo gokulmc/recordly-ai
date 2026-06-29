@@ -576,7 +576,7 @@ export function registerAutoDemoHandlers(): void {
 	// macOS (falls back to Playwright webm elsewhere or if the helper is missing).
 	ipcMain.handle(
 		"auto-demo:record",
-		(event: { sender: WebContents }, opts: { scriptJson: string; outDir?: string }) => {
+		(event: { sender: WebContents }, opts: { scriptJson: string; outDir?: string; authStatePath?: string }) => {
 			const nativeEnv: Record<string, string> = {};
 			if (process.platform === "darwin") {
 				nativeEnv.PIPELINE_RECORD_BACKEND = "native";
@@ -589,6 +589,7 @@ export function registerAutoDemoHandlers(): void {
 				{
 					PIPELINE_SCRIPT_JSON: opts.scriptJson,
 					...(opts.outDir ? { PIPELINE_OUT_DIR: opts.outDir } : {}),
+					...(opts.authStatePath ? { PIPELINE_AUTH_STATE_PATH: opts.authStatePath } : {}),
 					...nativeEnv,
 				},
 				event.sender,

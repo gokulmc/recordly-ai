@@ -3,6 +3,8 @@
  * Enriched by the Playwright crawl stage before demo-script generation.
  */
 
+import type { CatalogEntry, Target } from "./target.js";
+
 export interface AppFeature {
   /** Short human-readable name */
   name: string;
@@ -16,6 +18,8 @@ export interface AppFeature {
   importance: number;
   /** LLM-guessed CSS/role selectors — crawl stage overwrites these with live DOM */
   likelySelectors?: string[];
+  /** Real interactive elements found on this feature's page (authenticated crawl) */
+  liveElements?: CatalogEntry[];
   /** Suggested interaction flow for this feature */
   suggestedFlow: string[];
 }
@@ -25,14 +29,18 @@ export interface AppFeature {
  * demo script replays these instead of guessing selectors.
  */
 export interface LoginSelectors {
-  /** URL where the login form was found */
+  /** URL where login begins (home page for modal logins) */
   url: string;
-  /** Selector that matched the email/username field */
-  emailSelector: string;
-  /** Selector that matched the password field */
-  passwordSelector: string;
-  /** For multi-step logins: a Next/Continue control clicked between email and password */
-  nextSelector?: string;
+  /** Control that opens an inline/modal login form (when login isn't at a URL) */
+  trigger?: Target;
+  /** Target that matched the email/username field */
+  email: Target;
+  /** How the form advances from email to password */
+  advance?: "enter" | "click";
+  /** Next/Continue control, when advance === "click" */
+  next?: Target;
+  /** Target that matched the password field */
+  password: Target;
 }
 
 export interface AppFeatureMap {
@@ -50,6 +58,8 @@ export interface AppFeatureMap {
   loginUrl?: string;
   /** Verified login selectors captured by the crawl (drives the demo's login steps) */
   loginSelectors?: LoginSelectors;
+  /** Path to a Playwright storageState file from a successful crawl login */
+  authStatePath?: string;
   /** App type hint used by saliency for cursor styling */
   appVibe?: string;
 }

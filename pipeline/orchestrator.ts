@@ -41,6 +41,8 @@ export interface RecordOpts {
   backend?: "native" | "playwright";
   /** ffmpeg binary path (for fiducial frame extraction in the native backend) */
   ffmpegPath?: string;
+  /** Playwright storageState file from a successful crawl login (auth carry-over) */
+  authStatePath?: string;
 }
 
 export interface RenderOpts {
@@ -157,24 +159,24 @@ export async function recordPhase(
       nativeOpts: makeProcessIpcTransport(),
       nativeOutputPath: path.join(outDir, "demo.mp4"),
       ...(opts.ffmpegPath ? { ffmpegPath: opts.ffmpegPath } : {}),
+      ...(opts.authStatePath ? { authStatePath: opts.authStatePath } : {}),
     });
   } else {
     result = await record(script, {
       videoDir: outDir,
       headless: false,
       postActionSettleMs: 200,
+      ...(opts.authStatePath ? { authStatePath: opts.authStatePath } : {}),
     });
   }
 
-  // Detect login failure: if the script had a login password-fill but no such
-  // fill landed in the trace, the sign-in fields weren't found — warn loudly
-  // instead of letting the demo silently show the login screen.
-  const loginPwStep = script.steps.find(
-    (s) => s.phase === "login" && s.action === "fill" && /password/i.test(s.selector ?? ""),
-  );
-  if (loginPwStep) {
-    const filled = result.trace.events.some((e) => e.action === "fill" && e.selector === loginPwStep.selector);
-    if (!filled) {
+  // Detect login failure: the script had login steps but no password fill landed
+  // (password fills are recorded with redacted "•" text). Warn loudly instead of
+  // letting the demo silently show the login screen.
+  const hasLoginSteps = script.steps.some((s) => s.phase === "login");
+  if (hasLoginSteps) {
+    const passwordFilled = result.trace.events.some((e) => e.action === "fill" && /•/.test(e.text ?? ""));
+    if (!passwordFilled) {
       send({
         type: "stage",
         stageId: "record",
@@ -291,10 +293,10 @@ export async function runPipeline(
   const outDir = opts.outDir ?? path.join(os.homedir(), "Desktop", "recordly-auto-demo");
   await fs.mkdir(outDir, { recursive: true });
 
-  const { script } = await generateScriptPhase(opts, send);
+  const { script, featureMap } = await generateScriptPhase(opts, send);
   const { videoPath, traceJsonPath } = await recordPhase(
     script,
-    { outDir, backend: opts.backend, ffmpegPath: opts.ffmpegPath },
+    { outDir, backend: opts.backend, ffmpegPath: opts.ffmpegPath, authStatePath: featureMap.authStatePath },
     send,
   );
 

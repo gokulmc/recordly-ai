@@ -14,8 +14,24 @@
 import { performance } from "node:perf_hooks";
 import type { Locator, Page } from "playwright";
 import type { InteractionEvent, InteractionTrace } from "../schema/interactionTrace.js";
-import { captureElementInfo, capturePageContext } from "./domCapture.js";
+import { captureElementInfo, captureElementInfoFromLocator, capturePageContext } from "./domCapture.js";
+import { compileTarget, describeTarget, findHealTarget } from "./locator.js";
+import type { Target } from "../schema/target.js";
 import { perfNowToEventTms } from "./syncBeacon.js";
+
+/** A step's target hints: a structured Target (preferred), a legacy selector, and a self-heal intent. */
+export interface StepRef {
+	target?: Target;
+	selector?: string;
+	match?: { role?: string; name?: string };
+}
+
+interface ResolvedStep {
+	locator: Locator;
+	requested: string;
+	resolved: string;
+	healed: boolean;
+}
 
 /**
  * Per-action wait budget. Kept short so a missed selector does not dead-air the
@@ -97,6 +113,62 @@ export async function resolveAction(
 	return null;
 }
 
+async function locatorVisible(loc: Locator, timeoutMs: number): Promise<boolean> {
+	try {
+		await loc.waitFor({ state: "visible", timeout: timeoutMs });
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Resolve a step to a visible locator. Order: structured Target → legacy
+ * selector (+ derived fallbacks) → bounded high-confidence self-heal from the
+ * recorded intent (`match`). Returns the requested vs resolved descriptors so
+ * heals are auditable in the trace.
+ */
+export async function resolveStep(
+	page: Page,
+	ref: StepRef,
+	action: string,
+	timeoutMs = ACTION_TIMEOUT_MS,
+): Promise<ResolvedStep | null> {
+	// 1. Structured Target (preferred).
+	if (ref.target) {
+		const requested = describeTarget(ref.target);
+		const loc = compileTarget(page, ref.target);
+		if (await locatorVisible(loc, timeoutMs)) {
+			return { locator: loc, requested, resolved: requested, healed: false };
+		}
+		const healed = await tryHeal(page, ref, action, requested);
+		if (healed) return healed;
+	}
+
+	// 2. Legacy selector string (+ fallbacks).
+	if (ref.selector) {
+		const r = await resolveAction(page, ref.selector, ref.target ? FALLBACK_TIMEOUT_MS : timeoutMs);
+		if (r) {
+			return { locator: r.locator, requested: ref.selector, resolved: r.selector, healed: r.selector !== ref.selector };
+		}
+		const healed = await tryHeal(page, ref, action, ref.selector);
+		if (healed) return healed;
+	}
+
+	return null;
+}
+
+async function tryHeal(page: Page, ref: StepRef, action: string, requested: string): Promise<ResolvedStep | null> {
+	if (!ref.match) return null;
+	const healTarget = await findHealTarget(page, action, ref.match);
+	if (!healTarget) return null;
+	const loc = compileTarget(page, healTarget);
+	if (!(await locatorVisible(loc, FALLBACK_TIMEOUT_MS))) return null;
+	const resolved = describeTarget(healTarget);
+	console.log(`  [recorder] healed "${requested}" → "${resolved}"`);
+	return { locator: loc, requested, resolved, healed: true };
+}
+
 /**
  * Capture a navigate event. Waits for `networkidle` so the new page is fully
  * loaded before capturing context. Creates no new segment (caller does that
@@ -132,15 +204,15 @@ export async function traceNavigate(
 export async function traceClick(
 	page: Page,
 	trace: InteractionTrace,
-	selector: string,
+	ref: StepRef,
 ): Promise<void> {
 	const seg = currentSegment(trace);
-	const resolved = await resolveAction(page, selector);
-	if (!resolved) throw new Error(`no visible element for selector ${selector}`);
-	await resolved.locator.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
-	await resolved.locator.click({ timeout: ACTION_TIMEOUT_MS });
+	const r = await resolveStep(page, ref, "click");
+	if (!r) throw new Error(`no visible element for ${describeRef(ref)}`);
+	await r.locator.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+	await r.locator.click({ timeout: ACTION_TIMEOUT_MS });
 	const tMs = perfNowToEventTms(performance.now(), seg);
-	const info = await captureElementInfo(page, resolved.selector);
+	const info = await captureElementInfoFromLocator(page, r.locator);
 	if (!info) return;
 
 	const ctx = await capturePageContext(page);
@@ -152,7 +224,9 @@ export async function traceClick(
 		visibleBbox: info.visibleBbox,
 		containerBbox: info.containerBbox,
 		occluded: info.occluded || undefined,
-		selector,
+		selector: r.resolved,
+		requestedSelector: r.requested,
+		resolvedSelector: r.healed ? r.resolved : undefined,
 		role: info.role,
 		accessibleName: info.accessibleName,
 		computedCursor: info.computedCursor,
@@ -165,21 +239,29 @@ export async function traceClick(
 	trace.events.push(event);
 }
 
+/** Human-readable description of a StepRef for error messages. */
+function describeRef(ref: StepRef): string {
+	if (ref.target) return describeTarget(ref.target);
+	if (ref.selector) return ref.selector;
+	if (ref.match?.name) return `match("${ref.match.name}")`;
+	return "unknown target";
+}
+
 /**
  * Capture a double-click event.
  */
 export async function traceDblClick(
 	page: Page,
 	trace: InteractionTrace,
-	selector: string,
+	ref: StepRef,
 ): Promise<void> {
 	const seg = currentSegment(trace);
-	const resolved = await resolveAction(page, selector);
-	if (!resolved) throw new Error(`no visible element for selector ${selector}`);
-	await resolved.locator.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
-	await resolved.locator.dblclick({ timeout: ACTION_TIMEOUT_MS });
+	const r = await resolveStep(page, ref, "dblclick");
+	if (!r) throw new Error(`no visible element for ${describeRef(ref)}`);
+	await r.locator.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+	await r.locator.dblclick({ timeout: ACTION_TIMEOUT_MS });
 	const tMs = perfNowToEventTms(performance.now(), seg);
-	const info = await captureElementInfo(page, resolved.selector);
+	const info = await captureElementInfoFromLocator(page, r.locator);
 	if (!info) return;
 
 	const ctx = await capturePageContext(page);
@@ -190,7 +272,9 @@ export async function traceDblClick(
 		bbox: info.bbox,
 		visibleBbox: info.visibleBbox,
 		containerBbox: info.containerBbox,
-		selector,
+		selector: r.resolved,
+		requestedSelector: r.requested,
+		resolvedSelector: r.healed ? r.resolved : undefined,
 		role: info.role,
 		computedCursor: info.computedCursor,
 		text: info.text,
@@ -206,23 +290,23 @@ export async function traceDblClick(
 export async function traceFill(
 	page: Page,
 	trace: InteractionTrace,
-	selector: string,
+	ref: StepRef,
 	value: string,
 ): Promise<void> {
 	const seg = currentSegment(trace);
-	const resolved = await resolveAction(page, selector);
-	if (!resolved) throw new Error(`no visible element for selector ${selector}`);
-	await resolved.locator.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
-	await resolved.locator.fill(value, { timeout: ACTION_TIMEOUT_MS });
+	const r = await resolveStep(page, ref, "fill");
+	if (!r) throw new Error(`no visible element for ${describeRef(ref)}`);
+	await r.locator.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+	await r.locator.fill(value, { timeout: ACTION_TIMEOUT_MS });
 	const tMs = perfNowToEventTms(performance.now(), seg);
-	const info = await captureElementInfo(page, resolved.selector);
+	const info = await captureElementInfoFromLocator(page, r.locator);
 	if (!info) return;
 
 	// Never persist a typed password to the on-disk trace. Detect by the live
-	// element type as well as the selector text.
+	// element type and the requested descriptor.
 	const isPassword =
-		/password/i.test(selector) ||
-		(await resolved.locator.getAttribute("type").catch(() => null)) === "password";
+		/password/i.test(r.requested) ||
+		(await r.locator.getAttribute("type").catch(() => null)) === "password";
 	const recordedText = isPassword ? "•".repeat(Math.min(value.length, 8)) : value;
 
 	const ctx = await capturePageContext(page);
@@ -233,7 +317,9 @@ export async function traceFill(
 		bbox: info.bbox,
 		visibleBbox: info.visibleBbox,
 		containerBbox: info.containerBbox,
-		selector,
+		selector: r.resolved,
+		requestedSelector: r.requested,
+		resolvedSelector: r.healed ? r.resolved : undefined,
 		role: info.role,
 		computedCursor: info.computedCursor,
 		text: recordedText,
@@ -250,15 +336,15 @@ export async function traceFill(
 export async function traceHover(
 	page: Page,
 	trace: InteractionTrace,
-	selector: string,
+	ref: StepRef,
 ): Promise<void> {
 	const seg = currentSegment(trace);
-	const resolved = await resolveAction(page, selector);
-	if (!resolved) throw new Error(`no visible element for selector ${selector}`);
-	await resolved.locator.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
-	await resolved.locator.hover({ timeout: ACTION_TIMEOUT_MS });
+	const r = await resolveStep(page, ref, "hover");
+	if (!r) throw new Error(`no visible element for ${describeRef(ref)}`);
+	await r.locator.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+	await r.locator.hover({ timeout: ACTION_TIMEOUT_MS });
 	const tMs = perfNowToEventTms(performance.now(), seg);
-	const info = await captureElementInfo(page, resolved.selector);
+	const info = await captureElementInfoFromLocator(page, r.locator);
 	if (!info) return;
 
 	const ctx = await capturePageContext(page);
@@ -269,7 +355,9 @@ export async function traceHover(
 		bbox: info.bbox,
 		visibleBbox: info.visibleBbox,
 		containerBbox: info.containerBbox,
-		selector,
+		selector: r.resolved,
+		requestedSelector: r.requested,
+		resolvedSelector: r.healed ? r.resolved : undefined,
 		role: info.role,
 		computedCursor: info.computedCursor,
 		scroll: info.scroll,

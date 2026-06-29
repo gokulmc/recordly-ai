@@ -1060,7 +1060,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		githubToken?: string;
 		focusArea?: string;
 	}) => ipcRenderer.invoke("auto-demo:generate-script", opts) as Promise<{ success: boolean }>,
-	autoDemoRecord: (opts: { scriptJson: string; outDir?: string }) =>
+	autoDemoRecord: (opts: { scriptJson: string; outDir?: string; authStatePath?: string }) =>
 		ipcRenderer.invoke("auto-demo:record", opts) as Promise<{ success: boolean }>,
 	autoDemoRender: (opts: {
 		videoPath: string;

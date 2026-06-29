@@ -1,23 +1,30 @@
 /**
- * Demo-script generation (M5).
+ * Demo-script generation.
  *
- * Takes the crawl-enriched AppFeatureMap and asks DeepSeek to produce an
- * ordered DemoStep[] that the recorder can execute directly.
- *
- * Generated steps use selectors observed during the crawl (the authority).
- * LLM-guessed selectors are used as fallback hints only.
+ * The crawl produces, per feature, a catalog of REAL interactive elements
+ * (authenticated). The LLM orders a demo by referencing catalog elements by id
+ * — it never invents selectors. We then deterministically validate each step
+ * against the catalog and compile a durable Target, so the recorder replays only
+ * things that actually exist on the live app.
  */
 
-import type { AppFeatureMap } from "../schema/appFeatureMap.js";
+import type { AppFeatureMap, AppFeature } from "../schema/appFeatureMap.js";
+import type { CatalogEntry, Target } from "../schema/target.js";
 import type { DemoStep, RecordingScript } from "../record/types.js";
 import { chat, parseJson, DEEPSEEK_SMART_MODEL } from "../../llm/deepseek.js";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+export interface ScriptGenOptions {
+  authEmail?: string;
+  authPassword?: string;
+  focusArea?: string;
+}
 
-interface LlmDemoStep {
+interface LlmStep {
   action: string;
-  url?: string;
-  selector?: string;
+  /** 1-based index into the presented feature list (for interactive steps) */
+  feature?: number;
+  /** catalog element id within that feature (for click/fill/hover/type) */
+  element?: number;
   value?: string;
   key?: string;
   scrollDeltaY?: number;
@@ -25,67 +32,63 @@ interface LlmDemoStep {
   narration?: string;
 }
 
-// ── Prompt ─────────────────────────────────────────────────────────────────────
+const INTERACTIVE = new Set(["click", "dblclick", "hover", "fill", "type"]);
 
-const STEP_SCHEMA = `Array of step objects. Each step has:
-  action: "navigate"|"click"|"fill"|"type"|"hover"|"scroll"|"wait"|"keypress"
-  url?: string          (only for navigate)
-  selector?: string     (CSS or Playwright role selector)
-  value?: string        (for fill/type)
-  key?: string          (for keypress, e.g. "Enter")
-  scrollDeltaY?: number (for scroll, positive = down)
-  waitMs?: number       (for wait, in ms)
-  narration?: string    (what the viewer sees — shown as caption later)`;
+function targetMatch(t: Target): { role?: string; name?: string } {
+  if (t.kind === "role") return { role: t.role, name: t.name };
+  if (t.kind === "text" || t.kind === "label" || t.kind === "placeholder") return { name: t.value };
+  return {};
+}
 
-// ── Public API ─────────────────────────────────────────────────────────────────
-
-/**
- * Generate a RecordingScript from the enriched AppFeatureMap.
- *
- * @param featureMap  Crawl-enriched feature map
- * @param productionUrl  The live URL to record against
- */
-export interface ScriptGenOptions {
-  authEmail?: string;
-  authPassword?: string;
-  /** Optional natural-language description of which features/flows to cover */
-  focusArea?: string;
+function actionFitsEntry(action: string, e: CatalogEntry): boolean {
+  if (action === "fill" || action === "type") {
+    return e.role === "textbox" || e.role === "searchbox" || e.role === "combobox" || e.tag === "input" || e.tag === "textarea";
+  }
+  return true;
 }
 
 /**
- * Build a deterministic login sequence. We do NOT trust the LLM to log in —
- * instead we replay the EXACT selectors the crawl verified (incl. a Next click
- * for multi-step forms), falling back to generic selectors only if the crawl
- * couldn't capture them. Every step is tagged `phase:"login"` so the recorder
- * can detect and report login failure instead of silently skipping it.
+ * Deterministic, captured login replay (on camera). Uses the Targets the crawl
+ * verified — trigger that opens the form, email, how it advances (Enter or a
+ * Next click), and password. Falls back to generic selectors only if the crawl
+ * couldn't capture them. Tagged phase:"login" so the recorder flags failures.
  */
-function buildLoginSteps(
-  featureMap: AppFeatureMap,
-  productionUrl: string,
-  email: string,
-  password: string,
-): DemoStep[] {
-  const captured = featureMap.loginSelectors;
-  const loginUrl = captured?.url ?? featureMap.loginUrl ?? new URL("/login", productionUrl).href;
-  const emailSel = captured?.emailSelector
-    ?? 'input[type="email"], input[name="email"], input[name="username"], #signInFormUsername, input[autocomplete="username"]';
-  const passSel = captured?.passwordSelector
-    ?? 'input[type="password"], input[name="password"], #signInFormPassword';
+function buildLoginSteps(featureMap: AppFeatureMap, productionUrl: string, email: string, password: string): DemoStep[] {
+  const c = featureMap.loginSelectors;
+  const loginUrl = c?.url ?? featureMap.loginUrl ?? productionUrl;
+  const EMAIL_FALLBACK = 'input[type="email"], input[name="email"], input[name="username"], #signInFormUsername';
+  const PASS_FALLBACK = 'input[type="password"], input[name="password"], #signInFormPassword';
 
   const steps: DemoStep[] = [
     { action: "navigate", url: loginUrl, narration: `Signing in to ${featureMap.appName}.`, phase: "login" },
     { action: "wait", waitMs: 1200, phase: "login" },
-    { action: "fill", selector: emailSel, value: email, narration: "Entering the demo account email.", phase: "login" },
   ];
-  // Multi-step (email → Next → password) forms.
-  if (captured?.nextSelector) {
+  if (c?.trigger) {
     steps.push(
-      { action: "click", selector: captured.nextSelector, narration: "Continuing to the password step.", phase: "login" },
-      { action: "wait", waitMs: 1500, phase: "login" },
+      { action: "click", target: c.trigger, match: targetMatch(c.trigger), narration: "Opening the sign-in form.", phase: "login" },
+      { action: "wait", waitMs: 1000, phase: "login" },
     );
   }
   steps.push(
-    { action: "fill", selector: passSel, value: password, narration: "Entering the password.", phase: "login" },
+    c?.email
+      ? { action: "fill", target: c.email, value: email, narration: "Entering the demo account email.", phase: "login" }
+      : { action: "fill", selector: EMAIL_FALLBACK, value: email, narration: "Entering the demo account email.", phase: "login" },
+  );
+  if (c?.advance === "click" && c.next) {
+    steps.push(
+      { action: "click", target: c.next, match: targetMatch(c.next), narration: "Continuing to the password step.", phase: "login" },
+      { action: "wait", waitMs: 1200, phase: "login" },
+    );
+  } else {
+    steps.push(
+      { action: "keypress", key: "Enter", narration: "Continuing.", phase: "login" },
+      { action: "wait", waitMs: 1200, phase: "login" },
+    );
+  }
+  steps.push(
+    c?.password
+      ? { action: "fill", target: c.password, value: password, narration: "Entering the password.", phase: "login" }
+      : { action: "fill", selector: PASS_FALLBACK, value: password, narration: "Entering the password.", phase: "login" },
     { action: "keypress", key: "Enter", narration: "Logging in.", phase: "login" },
     { action: "wait", waitMs: 3000, narration: "Loading the signed-in experience.", phase: "login" },
   );
@@ -98,102 +101,90 @@ export async function generateDemoScript(
   opts: ScriptGenOptions = {},
 ): Promise<RecordingScript> {
   const { authEmail, authPassword, focusArea } = opts;
-  const featureSummary = featureMap.features
-    .sort((a, b) => b.importance - a.importance)
-    .slice(0, 4) // top 4 features for a concise demo
-    .map(
-      (f, i) => `Feature ${i + 1}: ${f.name}
-  Description: ${f.description}
-  URL path: ${f.entryPath}
-  Selectors (from live DOM): ${(f.likelySelectors ?? []).join(", ") || "none discovered"}
-  Suggested flow: ${f.suggestedFlow.join(" → ")}`,
-    )
+
+  // Present the top features and their REAL element catalogs to the LLM.
+  const topFeatures = [...featureMap.features].sort((a, b) => b.importance - a.importance).slice(0, 5);
+  const featureSummary = topFeatures
+    .map((f, i) => {
+      const cat = (f.liveElements ?? [])
+        .slice(0, 18)
+        .map((e) => `    [${e.id}] "${e.text || "(no text)"}" — ${e.role || e.tag}${e.enabled ? "" : " (disabled)"}`)
+        .join("\n");
+      return `Feature ${i + 1}: ${f.name}\n  ${f.description}\n  Real elements on this page:\n${cat || "    (none captured)"}`;
+    })
     .join("\n\n");
 
-  // Build auth hint — pass email in prompt but NOT password (substituted post-parse)
-  const authHint = authEmail && authPassword
-    ? `\nDEMO USER: email="${authEmail}", password=DEMO_PASSWORD_PLACEHOLDER`
-    : "";
-
-  const prompt = `You are creating a Playwright automation script for a product demo video of "${featureMap.appName}".${authHint}
-
-App: ${featureMap.appName}
+  const prompt = `You are scripting a product-demo video of "${featureMap.appName}".
 Description: ${featureMap.appDescription}
 Production URL: ${productionUrl}
-Vibe: ${featureMap.appVibe ?? "productivity"}
 
-TOP FEATURES TO DEMO:
+You are given the TOP FEATURES and, for each, the REAL interactive elements found
+on the live (signed-in) app, each with an id. Build a 2–4 feature demo by
+choosing elements to interact with BY ID. Do NOT invent selectors or ids.
+
 ${featureSummary}
 
-Generate a demo script that:
-1. Starts at the production URL (navigate step)
-2. Demonstrates 2-3 of the top features in a logical order
-3. CRITICAL: use ONLY selectors copied verbatim from the "Selectors (from live DOM)" lists above. Do NOT invent selectors or guess element text. If a feature lists no usable selector, demonstrate it with a navigate/scroll/wait step and narration instead of clicking. A wrong selector wastes the whole step.
-4. Includes natural pacing: wait 1-2s after navigating, 300-500ms after clicking
-5. Each meaningful interaction has a narration string (what the viewer would understand)
-6. Total duration: ~30-60 seconds of interactions (not counting waits between features)
-${authEmail && authPassword
-  ? `7. Do NOT include any login / sign-in steps. A reliable login is performed
-   automatically BEFORE your steps. Begin directly with the first authenticated
-   feature, assuming the user is already signed in.`
-  : `7. NO login steps — demo only public/unauthenticated features.
-   If a feature requires login, navigate to it anyway and show the login gate as a feature.`}
-8. Prefer fill/type + keypress(Enter) over clicking submit buttons (more natural)
-${focusArea ? `\nFOCUS AREA: ${focusArea}\nPrioritise these specific features/flows above all others.` : ""}
+Return a JSON array of steps. Each step:
+  action: "click"|"fill"|"hover"|"type"|"scroll"|"wait"
+  feature: number   (the "Feature N" number, for click/fill/hover/type)
+  element: number   (the [id] of the element within that feature)
+  value?: string    (for fill/type)
+  scrollDeltaY?: number   (for scroll)
+  waitMs?: number   (for wait)
+  narration: string (one short sentence the viewer hears)
 
-${STEP_SCHEMA}
+Rules:
+- Use ONLY (feature, element) pairs that appear above. Skip features with no elements.
+- Demonstrate a coherent flow: type a query/fill an input, click a primary action, hover/scroll to reveal results.
+- Pace it: a short wait (800–1500ms) after meaningful actions.
+- ${authEmail ? "The user is ALREADY signed in — do NOT add login steps." : "Demo only public features."}
+${focusArea ? `- Focus: ${focusArea}` : ""}
 
-Return ONLY a JSON array of steps, no markdown fences, no explanation.
-Example shape: [{"action":"navigate","url":"https://...","narration":"Opening forkai"},{"action":"click","selector":"...","narration":"..."}]`;
+Return ONLY the JSON array.`;
 
-  console.log("  [script] generating demo script …");
-  const raw = await chat([{ role: "user", content: prompt }], {
-    model: DEEPSEEK_SMART_MODEL,
-    maxTokens: 3000,
-  });
+  console.log("  [script] generating demo script from live catalog …");
+  const raw = await chat([{ role: "user", content: prompt }], { model: DEEPSEEK_SMART_MODEL, maxTokens: 2500 });
+  const llmSteps = parseJson<LlmStep[]>(raw);
 
-  const llmSteps = parseJson<LlmDemoStep[]>(raw);
+  // Deterministically validate each step against the catalog.
+  const body: DemoStep[] = [];
+  let dropped = 0;
+  for (const s of Array.isArray(llmSteps) ? llmSteps : []) {
+    const action = s.action as DemoStep["action"];
+    if (action === "wait") {
+      body.push({ action: "wait", waitMs: s.waitMs ?? 800, narration: s.narration });
+      continue;
+    }
+    if (action === "scroll") {
+      body.push({ action: "scroll", scrollDeltaY: s.scrollDeltaY ?? 300, narration: s.narration });
+      continue;
+    }
+    if (!INTERACTIVE.has(action)) { dropped++; continue; }
 
-  // Validate + normalise to DemoStep
-  const llmDemoSteps: DemoStep[] = llmSteps
-    .filter((s) => typeof s.action === "string")
-    .map((s): DemoStep => {
-      // Substitute the real password for the placeholder the LLM used
-      if (authPassword && s.value === "DEMO_PASSWORD_PLACEHOLDER") {
-        s.value = authPassword;
-      }
-      const base: DemoStep = { action: s.action as DemoStep["action"] };
-      if (s.url) base.url = s.url;
-      if (s.selector) base.selector = s.selector;
-      if (s.value) base.value = s.value;
-      if (s.key) base.key = s.key;
-      if (s.scrollDeltaY) base.scrollDeltaY = s.scrollDeltaY;
-      if (s.waitMs) base.waitMs = s.waitMs;
-      if (s.narration) base.narration = s.narration;
-      return base;
+    const feat: AppFeature | undefined = typeof s.feature === "number" ? topFeatures[s.feature - 1] : undefined;
+    const entry = feat?.liveElements?.find((e) => e.id === s.element);
+    if (!entry || !actionFitsEntry(action, entry)) { dropped++; continue; }
+
+    body.push({
+      action,
+      target: entry.target,
+      match: { role: entry.role, name: entry.text },
+      ...(s.value ? { value: s.value } : {}),
+      narration: s.narration ?? entry.text,
     });
+  }
+  if (dropped) console.log(`  [script] dropped ${dropped} step(s) not grounded in the live catalog`);
 
-  // Deterministically prepend login when credentials are provided, so the demo
-  // always starts signed in (rather than relying on the LLM to log in).
   const steps: DemoStep[] =
     authEmail && authPassword
-      ? [...buildLoginSteps(featureMap, productionUrl, authEmail, authPassword), ...llmDemoSteps]
-      : llmDemoSteps;
+      ? [...buildLoginSteps(featureMap, productionUrl, authEmail, authPassword), ...body]
+      : body;
 
   console.log(`  [script] generated ${steps.length} steps`);
-  if (steps.length > 0) {
-    console.log("  [script] preview:");
-    steps.slice(0, 5).forEach((s, i) => {
-      const desc = s.narration ?? s.selector ?? s.url ?? s.value ?? s.key ?? "";
-      console.log(`    ${i + 1}. ${s.action}  ${desc.slice(0, 70)}`);
-    });
-    if (steps.length > 5) console.log(`    … +${steps.length - 5} more`);
-  }
+  steps.slice(0, 6).forEach((s, i) => {
+    const desc = s.narration ?? s.url ?? s.key ?? "";
+    console.log(`    ${i + 1}. ${s.action}  ${String(desc).slice(0, 70)}`);
+  });
 
-  return {
-    startUrl: productionUrl,
-    steps,
-    viewportWidth: 1440,
-    viewportHeight: 900,
-  };
+  return { startUrl: productionUrl, steps, viewportWidth: 1440, viewportHeight: 900 };
 }

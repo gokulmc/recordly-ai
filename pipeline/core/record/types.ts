@@ -5,6 +5,7 @@
  */
 
 import type { InteractionTrace } from "../schema/interactionTrace.js";
+import type { Target } from "../schema/target.js";
 
 export type DemoAction =
 	| "navigate"
@@ -22,8 +23,12 @@ export interface DemoStep {
 	action: DemoAction;
 	/** For navigate */
 	url?: string;
-	/** CSS selector or Playwright text/role locator string */
+	/** Durable structured locator (preferred over `selector`). */
+	target?: Target;
+	/** Legacy/explicit CSS selector or Playwright text/role locator string. */
 	selector?: string;
+	/** Recorded intent for high-confidence self-heal when the target misses. */
+	match?: { role?: string; name?: string };
 	/** Value for fill / type */
 	value?: string;
 	/** Key name for keypress (e.g. "Enter") */
@@ -51,6 +56,8 @@ export interface RecorderConfig {
 	headless?: boolean;
 	/** How long to wait after each action for the page to settle (ms) */
 	postActionSettleMs?: number;
+	/** Playwright storageState file from a successful crawl login (auth carry-over). */
+	authStatePath?: string;
 }
 
 export interface RecordingResult {

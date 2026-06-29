@@ -41,6 +41,7 @@ const focusArea = process.env.PIPELINE_FOCUS_AREA;
 const outDir = process.env.PIPELINE_OUT_DIR;
 const recordBackend = process.env.PIPELINE_RECORD_BACKEND === "native" ? "native" : undefined;
 const ffmpegPath = process.env.PIPELINE_FFMPEG_PATH || undefined;
+const authStatePath = process.env.PIPELINE_AUTH_STATE_PATH || undefined;
 const zoomAggressiveness = process.env.PIPELINE_ZOOM_AGGRESSIVENESS
   ? Number(process.env.PIPELINE_ZOOM_AGGRESSIVENESS)
   : undefined;
@@ -63,7 +64,7 @@ async function main() {
       const scriptJson = process.env.PIPELINE_SCRIPT_JSON;
       if (!scriptJson) fail("PIPELINE_SCRIPT_JSON is required for record phase");
       const script = JSON.parse(scriptJson) as RecordingScript;
-      const result = await recordPhase(script, { outDir, backend: recordBackend, ffmpegPath }, send);
+      const result = await recordPhase(script, { outDir, backend: recordBackend, ffmpegPath, authStatePath }, send);
       if (process.send) process.send({ type: "phase-result", result });
       break;
     }

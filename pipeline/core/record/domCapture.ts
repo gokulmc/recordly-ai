@@ -33,22 +33,30 @@ export async function captureElementInfo(
 	page: Page,
 	selector: string,
 ): Promise<DomElementInfo | null> {
+	const handle = await page.locator(selector).first().elementHandle({ timeout: 3000 }).catch(() => null);
+	return captureElementInfoFromHandle(page, handle);
+}
+
+/** Same as captureElementInfo but from an already-resolved Playwright Locator. */
+export async function captureElementInfoFromLocator(
+	page: Page,
+	locator: import("playwright").Locator,
+): Promise<DomElementInfo | null> {
+	const handle = await locator.elementHandle({ timeout: 3000 }).catch(() => null);
+	return captureElementInfoFromHandle(page, handle);
+}
+
+async function captureElementInfoFromHandle(
+	page: Page,
+	elementHandle: import("playwright").ElementHandle<Node> | null,
+): Promise<DomElementInfo | null> {
+	if (!elementHandle) return null;
 	// Wait for 2 animation frames so layout is stable post-action
 	await page.evaluate(() =>
 		new Promise<void>((resolve) =>
 			requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
 		),
 	);
-
-	// Use locator() to resolve Playwright-specific selectors (e.g. :has-text())
-	// then pass the resolved element handle into evaluate() for DOM geometry.
-	let elementHandle;
-	try {
-		elementHandle = await page.locator(selector).first().elementHandle({ timeout: 3000 });
-	} catch {
-		return null;
-	}
-	if (!elementHandle) return null;
 
 	return elementHandle.evaluate((el: Element) => {
 		if (!el) return null;
