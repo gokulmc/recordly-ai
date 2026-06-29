@@ -8,6 +8,7 @@ interface Props {
 
 export function VideoReviewWindow({ videoPath }: Props) {
   const [localSrc, setLocalSrc] = useState("");
+  const [zoom, setZoom] = useState(3);
   useEffect(() => {
     if (!videoPath) return;
     void window.electronAPI?.getLocalMediaUrl?.(videoPath).then((res) => {
@@ -16,8 +17,10 @@ export function VideoReviewWindow({ videoPath }: Props) {
   }, [videoPath]);
 
   const decide = (decision: "approve" | "modify") => {
-    window.electronAPI?.sendVideoReviewDecision?.(decision);
+    window.electronAPI?.sendVideoReviewDecision?.(decision, decision === "approve" ? zoom : undefined);
   };
+
+  const ZOOM_LABELS = ["Minimal", "Subtle", "Balanced", "Punchy", "Aggressive"];
 
   return (
     <div
@@ -36,8 +39,33 @@ export function VideoReviewWindow({ videoPath }: Props) {
         onClick={(e) => e.stopPropagation()}
       />
 
+      {/* Zoom density control */}
       <div
-        className="flex gap-3 mt-6"
+        className="mt-5 flex flex-col items-center gap-1.5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 text-white/70 text-xs">
+          <span>Zoom density</span>
+          <span className="text-white/90 font-medium tabular-nums">{ZOOM_LABELS[zoom - 1]}</span>
+        </div>
+        <input
+          type="range"
+          min={1}
+          max={5}
+          step={1}
+          value={zoom}
+          onChange={(e) => setZoom(Number(e.target.value))}
+          className="w-72 accent-green-500"
+          aria-label="Zoom density"
+        />
+        <div className="flex justify-between w-72 text-[10px] text-white/40">
+          <span>Subtle</span>
+          <span>Aggressive</span>
+        </div>
+      </div>
+
+      <div
+        className="flex gap-3 mt-4"
         onClick={(e) => e.stopPropagation()}
       >
         <Button

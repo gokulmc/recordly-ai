@@ -1054,6 +1054,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		traceJsonPath: string;
 		productionUrl?: string;
 		outDir?: string;
+		zoomAggressiveness?: number;
 	}) => ipcRenderer.invoke("auto-demo:render", opts) as Promise<{ success: boolean }>,
 	onAutoDemoPhaseResult: (callback: (result: unknown) => void) => {
 		const listener = (_event: Electron.IpcRendererEvent, result: unknown) => callback(result);
@@ -1066,12 +1067,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		ipcRenderer.invoke("video-review:open", videoPath),
 	closeVideoReview: () =>
 		ipcRenderer.invoke("video-review:close"),
-	onVideoReviewDecision: (callback: (decision: "approve" | "modify") => void) => {
-		const listener = (_event: Electron.IpcRendererEvent, decision: "approve" | "modify") => callback(decision);
+	onVideoReviewDecision: (callback: (decision: "approve" | "modify", zoomAggressiveness?: number) => void) => {
+		const listener = (_event: Electron.IpcRendererEvent, decision: "approve" | "modify", zoomAggressiveness?: number) => callback(decision, zoomAggressiveness);
 		ipcRenderer.on("video-review:decision", listener);
 		return () => ipcRenderer.removeListener("video-review:decision", listener);
 	},
-	sendVideoReviewDecision: (decision: "approve" | "modify") => {
-		ipcRenderer.send("video-review:user-decision", decision);
+	sendVideoReviewDecision: (decision: "approve" | "modify", zoomAggressiveness?: number) => {
+		ipcRenderer.send("video-review:user-decision", decision, zoomAggressiveness);
 	},
 });

@@ -53,10 +53,11 @@ export interface ScriptGenOptions {
 }
 
 /**
- * Build a deterministic login sequence. We do NOT trust the LLM to log in
- * correctly — instead we mirror the crawl's working login (generic email +
- * password fields, Enter) and navigate to the URL where the crawl actually
- * found the form. This guarantees the demo starts signed in.
+ * Build a deterministic login sequence. We do NOT trust the LLM to log in —
+ * instead we replay the EXACT selectors the crawl verified (incl. a Next click
+ * for multi-step forms), falling back to generic selectors only if the crawl
+ * couldn't capture them. Every step is tagged `phase:"login"` so the recorder
+ * can detect and report login failure instead of silently skipping it.
  */
 function buildLoginSteps(
   featureMap: AppFeatureMap,
@@ -64,20 +65,29 @@ function buildLoginSteps(
   email: string,
   password: string,
 ): DemoStep[] {
-  const loginUrl = featureMap.loginUrl ?? new URL("/login", productionUrl).href;
-  return [
-    { action: "navigate", url: loginUrl, narration: `Signing in to ${featureMap.appName}.` },
-    { action: "wait", waitMs: 1200 },
-    {
-      action: "fill",
-      selector: 'input[type="email"], input[name="email"], input[name="username"]',
-      value: email,
-      narration: "Entering the demo account email.",
-    },
-    { action: "fill", selector: 'input[type="password"]', value: password, narration: "Entering the password." },
-    { action: "keypress", key: "Enter", narration: "Logging in." },
-    { action: "wait", waitMs: 3000, narration: "Loading the signed-in experience." },
+  const captured = featureMap.loginSelectors;
+  const loginUrl = captured?.url ?? featureMap.loginUrl ?? new URL("/login", productionUrl).href;
+  const emailSel = captured?.emailSelector ?? 'input[type="email"], input[name="email"], input[name="username"]';
+  const passSel = captured?.passwordSelector ?? 'input[type="password"]';
+
+  const steps: DemoStep[] = [
+    { action: "navigate", url: loginUrl, narration: `Signing in to ${featureMap.appName}.`, phase: "login" },
+    { action: "wait", waitMs: 1200, phase: "login" },
+    { action: "fill", selector: emailSel, value: email, narration: "Entering the demo account email.", phase: "login" },
   ];
+  // Multi-step (email → Next → password) forms.
+  if (captured?.nextSelector) {
+    steps.push(
+      { action: "click", selector: captured.nextSelector, narration: "Continuing to the password step.", phase: "login" },
+      { action: "wait", waitMs: 1500, phase: "login" },
+    );
+  }
+  steps.push(
+    { action: "fill", selector: passSel, value: password, narration: "Entering the password.", phase: "login" },
+    { action: "keypress", key: "Enter", narration: "Logging in.", phase: "login" },
+    { action: "wait", waitMs: 3000, narration: "Loading the signed-in experience.", phase: "login" },
+  );
+  return steps;
 }
 
 export async function generateDemoScript(

@@ -39,6 +39,11 @@ const authPassword = process.env.PIPELINE_AUTH_PASSWORD;
 const githubToken = process.env.PIPELINE_GITHUB_TOKEN || undefined;
 const focusArea = process.env.PIPELINE_FOCUS_AREA;
 const outDir = process.env.PIPELINE_OUT_DIR;
+const recordBackend = process.env.PIPELINE_RECORD_BACKEND === "native" ? "native" : undefined;
+const ffmpegPath = process.env.PIPELINE_FFMPEG_PATH || undefined;
+const zoomAggressiveness = process.env.PIPELINE_ZOOM_AGGRESSIVENESS
+  ? Number(process.env.PIPELINE_ZOOM_AGGRESSIVENESS)
+  : undefined;
 
 function fail(msg: string): never {
   send({ type: "stage", stageId: "error", status: "error", message: msg, payload: { kind: "error", error: msg } });
@@ -58,7 +63,7 @@ async function main() {
       const scriptJson = process.env.PIPELINE_SCRIPT_JSON;
       if (!scriptJson) fail("PIPELINE_SCRIPT_JSON is required for record phase");
       const script = JSON.parse(scriptJson) as RecordingScript;
-      const result = await recordPhase(script, { outDir }, send);
+      const result = await recordPhase(script, { outDir, backend: recordBackend, ffmpegPath }, send);
       if (process.send) process.send({ type: "phase-result", result });
       break;
     }
@@ -67,14 +72,14 @@ async function main() {
       const videoPath = process.env.PIPELINE_VIDEO_PATH;
       const traceJsonPath = process.env.PIPELINE_TRACE_JSON_PATH;
       if (!videoPath || !traceJsonPath) fail("PIPELINE_VIDEO_PATH and PIPELINE_TRACE_JSON_PATH are required for render phase");
-      const result = await renderPhase(videoPath, traceJsonPath, { outDir, productionUrl }, send);
+      const result = await renderPhase(videoPath, traceJsonPath, { outDir, productionUrl, zoomAggressiveness }, send);
       if (process.send) process.send({ type: "phase-result", result });
       break;
     }
 
     default: {
       if (!repoUrl || !productionUrl) fail("PIPELINE_REPO_URL and PIPELINE_PRODUCTION_URL are required");
-      await runPipeline({ repoUrl, productionUrl, authEmail, authPassword, githubToken, focusArea, outDir, useLlm: true }, send);
+      await runPipeline({ repoUrl, productionUrl, authEmail, authPassword, githubToken, focusArea, outDir, useLlm: true, backend: recordBackend, ffmpegPath, zoomAggressiveness }, send);
       break;
     }
   }

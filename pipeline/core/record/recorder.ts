@@ -147,8 +147,6 @@ async function recordDualTrack(
 	const vw = script.viewportWidth ?? 1280;
 	const vh = script.viewportHeight ?? 720;
 	const settleMs = config.postActionSettleMs ?? DEFAULT_POST_SETTLE_MS;
-	const srcW = config.sourceFrameWidth ?? vw;
-	const srcH = config.sourceFrameHeight ?? vh;
 
 	// Dynamic import to avoid importing native-backend IPC types in headless builds
 	const { createNativeRecordlyBackend } = await import(
@@ -162,8 +160,11 @@ async function recordDualTrack(
 		onMessage: config.nativeOpts.onMessage,
 	});
 
-	// Start native capture first so it records from frame-0
-	await nativeBackend.start();
+	// Start native capture first so it records from frame-0. The started response
+	// carries the real captured-source pixel dimensions.
+	const started = await nativeBackend.start();
+	const srcW = config.sourceFrameWidth ?? (started.sourceWidth > 0 ? started.sourceWidth : vw);
+	const srcH = config.sourceFrameHeight ?? (started.sourceHeight > 0 ? started.sourceHeight : vh);
 
 	// Start Playwright (headed, non-recording — native backend provides the pixels)
 	const { chromium } = await import("playwright");

@@ -11,7 +11,7 @@
  */
 
 import { chromium, type Page } from "playwright";
-import type { AppFeatureMap, AppFeature } from "../schema/appFeatureMap.js";
+import type { AppFeatureMap, AppFeature, LoginSelectors } from "../schema/appFeatureMap.js";
 
 interface CrawlResult {
   /** Feature with updated selectors from live DOM */
@@ -195,9 +195,9 @@ export async function crawlAndEnrich(
   }
 
   // Attempt login if credentials provided
-  let loginUrl: string | null = null;
+  let login: LoginSelectors | null = null;
   if (opts.authEmail && opts.authPassword) {
-    loginUrl = await attemptLogin(page, productionUrl, opts.authEmail, opts.authPassword);
+    login = await attemptLogin(page, productionUrl, opts.authEmail, opts.authPassword);
   }
 
   const updatedFeatures: AppFeature[] = [];
@@ -210,58 +210,104 @@ export async function crawlAndEnrich(
   await context.close();
   await browser.close();
 
-  return { ...featureMap, features: updatedFeatures, ...(loginUrl ? { loginUrl } : {}) };
+  return {
+    ...featureMap,
+    features: updatedFeatures,
+    ...(login ? { loginUrl: login.url, loginSelectors: login } : {}),
+  };
 }
 
-/** Try to log in by looking for email/password fields on the current page or /login /signin. */
+const EMAIL_SELECTORS = [
+  'input[type="email"]',
+  'input[name="email"]',
+  'input[name="username"]',
+  'input[autocomplete="username"]',
+  'input[id*="email" i]',
+];
+const PASSWORD_SELECTORS = [
+  'input[type="password"]',
+  'input[name="password"]',
+  'input[autocomplete="current-password"]',
+];
+const NEXT_SELECTORS = [
+  'button:has-text("Next")',
+  'button:has-text("Continue")',
+  'button[type="submit"]',
+  'input[type="submit"]',
+];
+
+/** Return the first selector in `candidates` that points to a visible element. */
+async function firstVisibleSelector(
+  page: import("playwright").Page,
+  candidates: string[],
+  timeoutMs = 2000,
+): Promise<string | null> {
+  for (const sel of candidates) {
+    const visible = await page.locator(sel).first().isVisible({ timeout: timeoutMs }).catch(() => false);
+    if (visible) return sel;
+  }
+  return null;
+}
+
+/**
+ * Log in during the crawl and CAPTURE the exact selectors that worked, including
+ * a Next/Continue click for multi-step (email-then-password) forms. The demo
+ * script later replays these verified selectors instead of guessing.
+ */
 async function attemptLogin(
   page: import("playwright").Page,
   productionUrl: string,
   email: string,
   password: string,
-): Promise<string | null> {
+): Promise<LoginSelectors | null> {
   console.log("  [crawl] attempting login …");
 
-  // Try known sign-in paths
-  const signinPaths = ["/login", "/signin", "/auth/signin", "/sign-in", "/auth/login"];
-  for (const signinPath of signinPaths) {
-    const url = new URL(signinPath, productionUrl).href;
-    try {
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 10_000 });
-      await page.waitForTimeout(1500);
-      // Check if we landed on a login form (may redirect to Cognito hosted UI)
-      const formUrl = page.url();
-      const hasEmailField = await page.locator('input[type="email"], input[name="email"], input[name="username"]').first().isVisible({ timeout: 2000 }).catch(() => false);
-      if (hasEmailField) {
-        await page.locator('input[type="email"], input[name="email"], input[name="username"]').first().fill(email);
-        await page.waitForTimeout(300);
-        const hasPassField = await page.locator('input[type="password"]').first().isVisible({ timeout: 2000 }).catch(() => false);
-        if (hasPassField) {
-          await page.locator('input[type="password"]').first().fill(password);
-          await page.waitForTimeout(300);
-          await page.keyboard.press("Enter");
-          await page.waitForTimeout(3000);
-          console.log(`  [crawl] login submitted at ${formUrl} → ${page.url()}`);
-          return formUrl;
-        }
+  const tryForm = async (formUrl: string): Promise<LoginSelectors | null> => {
+    const emailSel = await firstVisibleSelector(page, EMAIL_SELECTORS);
+    if (!emailSel) return null;
+    await page.locator(emailSel).first().fill(email);
+    await page.waitForTimeout(300);
+
+    // Password may already be visible (single page) or require a Next click.
+    let passSel = await firstVisibleSelector(page, PASSWORD_SELECTORS, 1500);
+    let nextSel: string | undefined;
+    if (!passSel) {
+      const next = await firstVisibleSelector(page, NEXT_SELECTORS, 1500);
+      if (next) {
+        await page.locator(next).first().click().catch(() => {});
+        await page.waitForTimeout(1500);
+        passSel = await firstVisibleSelector(page, PASSWORD_SELECTORS, 2500);
+        if (passSel) nextSel = next;
       }
+    }
+    if (!passSel) return null;
+
+    await page.locator(passSel).first().fill(password);
+    await page.waitForTimeout(300);
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(3000);
+    console.log(`  [crawl] login submitted at ${formUrl}${nextSel ? " (multi-step)" : ""} → ${page.url()}`);
+    return { url: formUrl, emailSelector: emailSel, passwordSelector: passSel, nextSelector: nextSel };
+  };
+
+  // 1. Known sign-in paths.
+  for (const signinPath of ["/login", "/signin", "/auth/signin", "/sign-in", "/auth/login"]) {
+    try {
+      await page.goto(new URL(signinPath, productionUrl).href, { waitUntil: "domcontentloaded", timeout: 10_000 });
+      await page.waitForTimeout(1500);
+      const result = await tryForm(page.url());
+      if (result) return result;
     } catch { /* try next path */ }
   }
 
-  // Fallback: look for a Login button on the current page
+  // 2. Fallback: click a Login/Sign in control on the current page.
   try {
-    const loginBtn = page.locator('button:text("Login"), a:text("Login"), button:text("Sign in"), a:text("Sign in")').first();
-    const visible = await loginBtn.isVisible({ timeout: 2000 }).catch(() => false);
-    if (visible) {
+    const loginBtn = page.locator('button:has-text("Login"), a:has-text("Login"), button:has-text("Sign in"), a:has-text("Sign in")').first();
+    if (await loginBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
       await loginBtn.click();
       await page.waitForTimeout(2000);
-      const formUrl = page.url();
-      await page.locator('input[type="email"], input[name="email"], input[name="username"]').first().fill(email).catch(() => {});
-      await page.locator('input[type="password"]').first().fill(password).catch(() => {});
-      await page.keyboard.press("Enter");
-      await page.waitForTimeout(3000);
-      console.log(`  [crawl] login submitted via button → ${page.url()}`);
-      return formUrl;
+      const result = await tryForm(page.url());
+      if (result) return result;
     }
   } catch { /* skip */ }
 

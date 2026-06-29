@@ -34,6 +34,8 @@ export interface DemoStep {
 	waitMs?: number;
 	/** Optional LLM narration hint (used by M4 saliency) */
 	narration?: string;
+	/** Tags deterministic login steps so the recorder can detect login failure */
+	phase?: "login";
 }
 
 export interface RecordingScript {

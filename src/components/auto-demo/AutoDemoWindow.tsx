@@ -102,6 +102,7 @@ export function AutoDemoWindow() {
         videoPath: rawVideoPath,
         traceJsonPath,
         productionUrl: formValues.productionUrl.trim() || undefined,
+        zoomAggressiveness: store.zoomAggressiveness,
       }).catch((err: unknown) => {
         console.error("[AutoDemoWindow] render failed:", err);
         setIsRendering(false);

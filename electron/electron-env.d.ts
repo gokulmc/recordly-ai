@@ -976,6 +976,7 @@ interface Window {
 			traceJsonPath: string;
 			productionUrl?: string;
 			outDir?: string;
+			zoomAggressiveness?: number;
 		}) => Promise<{ success: boolean }>;
 		onAutoDemoPhaseResult: (
 			callback: (result: unknown) => void,
@@ -985,9 +986,9 @@ interface Window {
 		openVideoReview: (videoPath: string) => Promise<void>;
 		closeVideoReview: () => Promise<void>;
 		onVideoReviewDecision: (
-			callback: (decision: "approve" | "modify") => void,
+			callback: (decision: "approve" | "modify", zoomAggressiveness?: number) => void,
 		) => () => void;
-		sendVideoReviewDecision: (decision: "approve" | "modify") => void;
+		sendVideoReviewDecision: (decision: "approve" | "modify", zoomAggressiveness?: number) => void;
 	};
 }
 

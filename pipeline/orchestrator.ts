@@ -13,7 +13,7 @@ import { understandRepo } from "./core/ingest/repoUnderstanding.js";
 import { crawlAndEnrich } from "./core/crawl/playwrightCrawler.js";
 import { generateDemoScript } from "./core/script/demoScriptGen.js";
 import { record } from "./core/record/recorder.js";
-import { deriveZoomRegions } from "./core/derive/zoomDeriver.js";
+import { deriveZoomRegions, actionSaliency, zoomOptionsForAggressiveness } from "./core/derive/zoomDeriver.js";
 import { deriveCursorTelemetry } from "./core/derive/cursorDeriver.js";
 import { applySaliency } from "./core/derive/saliency.js";
 import { buildProject } from "./core/assemble/projectBuilder.js";
@@ -37,16 +37,24 @@ export interface ScriptGenOpts {
 
 export interface RecordOpts {
   outDir?: string;
+  /** "native" = high-fidelity ScreenCaptureKit dual-track; "playwright" = webm */
+  backend?: "native" | "playwright";
+  /** ffmpeg binary path (for fiducial frame extraction in the native backend) */
+  ffmpegPath?: string;
 }
 
 export interface RenderOpts {
   outDir?: string;
   productionUrl?: string;
+  /** 1 (subtle, fewer zooms) … 5 (aggressive, more zooms) */
+  zoomAggressiveness?: number;
 }
 
 export interface OrchestratorOpts extends ScriptGenOpts, RecordOpts {
   outDir?: string;
   useLlm?: boolean;
+  /** 1 (subtle) … 5 (aggressive) zoom density */
+  zoomAggressiveness?: number;
 }
 
 export interface OrchestratorResult {
@@ -135,11 +143,46 @@ export async function recordPhase(
 
   send({ type: "stage", stageId: "record", status: "running", message: "Recording demo …" });
 
-  const result = await record(script, {
-    videoDir: outDir,
-    headless: false,
-    postActionSettleMs: 200,
-  });
+  const useNative = opts.backend === "native" && typeof process.send === "function";
+  let result;
+  if (useNative) {
+    const { makeProcessIpcTransport } = await import("./core/record/captureBackends/nativeRecordly.js");
+    send({ type: "stage", stageId: "record", status: "running", message: "Starting high-fidelity capture …" });
+    result = await record(script, {
+      backend: "native",
+      videoDir: outDir,
+      headless: false,
+      postActionSettleMs: 200,
+      windowTitle: `recordly-auto-demo-${process.pid}`,
+      nativeOpts: makeProcessIpcTransport(),
+      nativeOutputPath: path.join(outDir, "demo.mp4"),
+      ...(opts.ffmpegPath ? { ffmpegPath: opts.ffmpegPath } : {}),
+    });
+  } else {
+    result = await record(script, {
+      videoDir: outDir,
+      headless: false,
+      postActionSettleMs: 200,
+    });
+  }
+
+  // Detect login failure: if the script had a login password-fill but no such
+  // fill landed in the trace, the sign-in fields weren't found — warn loudly
+  // instead of letting the demo silently show the login screen.
+  const loginPwStep = script.steps.find(
+    (s) => s.phase === "login" && s.action === "fill" && /password/i.test(s.selector ?? ""),
+  );
+  if (loginPwStep) {
+    const filled = result.trace.events.some((e) => e.action === "fill" && e.selector === loginPwStep.selector);
+    if (!filled) {
+      send({
+        type: "stage",
+        stageId: "record",
+        status: "running",
+        message: "⚠️ Login may have failed — the sign-in fields weren't found, so the demo may show the login screen. Check the demo credentials and login URL.",
+      });
+    }
+  }
 
   // Serialise trace alongside the video so render phase can deserialise it
   const traceJsonPath = result.videoPath + ".trace.json";
@@ -180,13 +223,27 @@ export async function renderPhase(
   const traceRaw = await fs.readFile(traceJsonPath, "utf-8");
   const trace = JSON.parse(traceRaw) as InteractionTrace;
 
-  const { regions: zoomRegions } = deriveZoomRegions(trace);
+  // Zoom-density knob (1=subtle … 5=aggressive): tighter merge gap + wider set
+  // of actions that earn a zoom.
+  const aggressiveness = opts.zoomAggressiveness ?? 3;
+  const { config: zoomConfig, emphasizeActions } = zoomOptionsForAggressiveness(aggressiveness);
+
+  const { regions: zoomRegions } = deriveZoomRegions(trace, {
+    config: zoomConfig,
+    saliency: actionSaliency(emphasizeActions),
+  });
   const { samples, cursorVisual } = deriveCursorTelemetry(trace);
 
   let cursorVisualFinal = cursorVisual;
   try {
     const llm = await applySaliency(trace, opts.productionUrl ?? "");
-    const { regions: llmRegions } = deriveZoomRegions(trace, { saliency: llm.saliency });
+    // Layer the LLM's per-event emphasis on top of the action-based widening so
+    // the density knob still increases region count even when the LLM is sparse.
+    const combined: typeof llm.saliency = (event, index) => {
+      const hint = llm.saliency(event, index);
+      return { ...hint, emphasize: hint.emphasize || emphasizeActions.has(event.action) };
+    };
+    const { regions: llmRegions } = deriveZoomRegions(trace, { config: zoomConfig, saliency: combined });
     zoomRegions.length = 0;
     zoomRegions.push(...llmRegions);
     cursorVisualFinal = llm.cursorVisual;
@@ -235,10 +292,14 @@ export async function runPipeline(
   await fs.mkdir(outDir, { recursive: true });
 
   const { script } = await generateScriptPhase(opts, send);
-  const { videoPath, traceJsonPath } = await recordPhase(script, { outDir }, send);
+  const { videoPath, traceJsonPath } = await recordPhase(
+    script,
+    { outDir, backend: opts.backend, ffmpegPath: opts.ffmpegPath },
+    send,
+  );
 
   if (opts.useLlm !== false) {
-    const { projectPath } = await renderPhase(videoPath, traceJsonPath, { outDir, productionUrl: opts.productionUrl }, send);
+    const { projectPath } = await renderPhase(videoPath, traceJsonPath, { outDir, productionUrl: opts.productionUrl, zoomAggressiveness: opts.zoomAggressiveness }, send);
     return { projectPath, videoPath };
   }
 

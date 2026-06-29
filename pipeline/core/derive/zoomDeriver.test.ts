@@ -5,6 +5,8 @@ import {
 	deriveZoomRegions,
 	mapComputedCursor,
 	quantizeDepth,
+	actionSaliency,
+	zoomOptionsForAggressiveness,
 } from "./zoomDeriver.js";
 import { ZOOM_DEPTH_SCALES } from "../schema/recordlyContract.js";
 
@@ -83,5 +85,38 @@ describe("mapComputedCursor", () => {
 		expect(mapComputedCursor("auto", "button")).toBe("pointer");
 		expect(mapComputedCursor("default", "textbox")).toBe("text");
 		expect(mapComputedCursor(undefined, undefined)).toBe("arrow");
+	});
+});
+
+describe("zoomOptionsForAggressiveness", () => {
+	it("maps level to a tighter merge gap and wider action set", () => {
+		const subtle = zoomOptionsForAggressiveness(1);
+		const aggressive = zoomOptionsForAggressiveness(5);
+		expect(subtle.config.mergeGapMs).toBe(2500);
+		expect(aggressive.config.mergeGapMs).toBe(800);
+		// Subtle: clicks only. Aggressive: clicks + fill + type + hover.
+		expect(subtle.emphasizeActions.has("fill")).toBe(false);
+		expect(aggressive.emphasizeActions.has("fill")).toBe(true);
+		expect(aggressive.emphasizeActions.has("hover")).toBe(true);
+	});
+
+	it("clamps out-of-range levels", () => {
+		expect(zoomOptionsForAggressiveness(0).config.mergeGapMs).toBe(2500);
+		expect(zoomOptionsForAggressiveness(99).config.mergeGapMs).toBe(800);
+	});
+
+	it("produces more zoom regions at higher aggressiveness", () => {
+		// sampleTrace: clicks @1000,1500,6000 + fill @9000.
+		const subtle = zoomOptionsForAggressiveness(1);
+		const aggressive = zoomOptionsForAggressiveness(5);
+		const subtleRegions = deriveZoomRegions(sampleTrace, {
+			config: subtle.config,
+			saliency: actionSaliency(subtle.emphasizeActions),
+		}).regions;
+		const aggressiveRegions = deriveZoomRegions(sampleTrace, {
+			config: aggressive.config,
+			saliency: actionSaliency(aggressive.emphasizeActions),
+		}).regions;
+		expect(aggressiveRegions.length).toBeGreaterThan(subtleRegions.length);
 	});
 });

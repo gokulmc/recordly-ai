@@ -20,6 +20,21 @@ export interface AppFeature {
   suggestedFlow: string[];
 }
 
+/**
+ * Exact, verified login interaction captured by the crawl's attemptLogin. The
+ * demo script replays these instead of guessing selectors.
+ */
+export interface LoginSelectors {
+  /** URL where the login form was found */
+  url: string;
+  /** Selector that matched the email/username field */
+  emailSelector: string;
+  /** Selector that matched the password field */
+  passwordSelector: string;
+  /** For multi-step logins: a Next/Continue control clicked between email and password */
+  nextSelector?: string;
+}
+
 export interface AppFeatureMap {
   /** App name inferred from package.json / README */
   appName: string;
@@ -33,6 +48,8 @@ export interface AppFeatureMap {
   authNeeded: boolean;
   /** URL where the crawl successfully logged in (set at crawl time, if creds given) */
   loginUrl?: string;
+  /** Verified login selectors captured by the crawl (drives the demo's login steps) */
+  loginSelectors?: LoginSelectors;
   /** App type hint used by saliency for cursor styling */
   appVibe?: string;
 }

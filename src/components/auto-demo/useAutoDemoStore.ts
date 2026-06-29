@@ -124,6 +124,8 @@ export function useAutoDemoStore() {
   const [isRendering, setIsRendering] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [logLines, setLogLines] = useState<string[]>([]);
+  /** Zoom density chosen in the video review window (1=subtle … 5=aggressive) */
+  const [zoomAggressiveness, setZoomAggressiveness] = useState(3);
 
   const [savedConfigs, setSavedConfigs] = useState<AutoDemoConfig[]>(() => {
     return loadAppSetting<AutoDemoConfig[]>("autoDemoConfigs") ?? [];
@@ -262,10 +264,11 @@ export function useAutoDemoStore() {
 
   // Listen for video-review decisions
   useEffect(() => {
-    const remove = window.electronAPI?.onVideoReviewDecision?.((decision) => {
+    const remove = window.electronAPI?.onVideoReviewDecision?.((decision, aggressiveness) => {
       if (decision === "modify") {
         setStep(2);
       } else if (decision === "approve") {
+        if (typeof aggressiveness === "number") setZoomAggressiveness(aggressiveness);
         setIsRendering(true);
         setStep(3);
         setStages(renderStartStages());
@@ -287,6 +290,7 @@ export function useAutoDemoStore() {
     isRendering, setIsRendering,
     errorMessage, setErrorMessage,
     logLines, setLogLines,
+    zoomAggressiveness, setZoomAggressiveness,
     savedConfigs, saveConfig, deleteConfig, loadConfig,
     reset,
     applyStageEvent,

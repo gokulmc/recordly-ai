@@ -33,15 +33,19 @@
  * the `auto-demo:start` fork path are implemented.
  */
 
-import { fork } from "node:child_process";
+import { fork, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { desktopCapturer, ipcMain, type WebContents } from "electron";
 import { openVideoReviewWindow, closeVideoReviewWindow, getHudOverlayWindow, getAutoDemoWindow, createAutoDemoWindow } from "../../windows";
 import { rememberApprovedLocalReadPath } from "../project/manager";
+import { ensureNativeCaptureHelperBinary } from "../paths/binaries";
+import { getFfmpegBinaryPath } from "../ffmpeg/binary";
+import { parseWindowId } from "../utils";
 import {
 	nativeScreenRecordingActive,
+	setNativeScreenRecordingActive,
 	setNoCursorTelemetryMode,
 } from "../state";
 import type { SelectedSource } from "../types";
@@ -116,41 +120,104 @@ async function findSourceByWindowTitle(
  * call it here. The IPC handler in recording.ts cannot be invoked from main;
  * it must be refactored to expose the underlying function.
  */
+/** The ScreenCaptureKit helper process backing the active auto-demo capture. */
+let activeNativeCapture: { proc: ChildProcessWithoutNullStreams; outputPath: string; stdout: string } | null = null;
+
 async function handleNativeCaptureStart(
 	msg: NativeCaptureStartMsg,
 	send: (resp: unknown) => void,
 ): Promise<void> {
-	if (nativeScreenRecordingActive) {
-		send({
-			type: "native-capture:error",
-			message: "A native recording is already active",
-		});
+	if (nativeScreenRecordingActive || activeNativeCapture) {
+		send({ type: "native-capture:error", message: "A native recording is already active" });
+		return;
+	}
+	if (process.platform !== "darwin") {
+		send({ type: "native-capture:error", message: "Native capture is only supported on macOS" });
 		return;
 	}
 
 	const source = await findSourceByWindowTitle(msg.windowTitle);
 	if (!source) {
-		send({
-			type: "native-capture:error",
-			message: `No desktop source found with window title "${msg.windowTitle}"`,
-		});
+		send({ type: "native-capture:error", message: `No desktop source found with window title "${msg.windowTitle}"` });
 		return;
 	}
 
-	// Set no-cursor-telemetry mode BEFORE starting native capture so that
-	// set-recording-state(true) skips cursor sampling entirely.
+	const windowId = parseWindowId(source.id);
+	if (!Number.isFinite(windowId) || !windowId) {
+		send({ type: "native-capture:error", message: `Could not resolve a window id for "${msg.windowTitle}"` });
+		return;
+	}
+
+	// No-cursor-telemetry: the pipeline owns the cursor sidecar, so the native
+	// helper must not draw/sample the system cursor.
 	setNoCursorTelemetryMode(true);
 
-	// M6 TODO: call invokeStartNativeRecording(source, { noCursorTelemetry: true })
-	// For now, emit the "started" acknowledgement so the pipeline can proceed.
-	// The actual recording start will be wired in M6.
-	send({
-		type: "native-capture:started",
-		outputPath: msg.outputPath,
-		// Placeholder dimensions — real values come from the capture helper after M6
-		sourceWidth: 0,
-		sourceHeight: 0,
-	});
+	try {
+		const helperPath = await ensureNativeCaptureHelperBinary();
+		const config = {
+			fps: 60,
+			outputPath: msg.outputPath,
+			windowId,
+			capturesSystemAudio: false,
+			capturesMicrophone: false,
+		};
+		const proc = spawn(helperPath, [JSON.stringify(config)], { stdio: ["pipe", "pipe", "pipe"] });
+		const capture = { proc, outputPath: msg.outputPath, stdout: "" };
+		activeNativeCapture = capture;
+		setNativeScreenRecordingActive(true);
+
+		const onData = (chunk: Buffer) => { capture.stdout += chunk.toString(); };
+		proc.stdout.on("data", onData);
+		proc.stderr.on("data", onData);
+
+		// Resolve once the helper confirms it is recording.
+		await new Promise<void>((resolve, reject) => {
+			const timer = setTimeout(() => reject(new Error("ScreenCaptureKit helper did not start within 12s")), 12_000);
+			const check = () => {
+				if (capture.stdout.includes("Recording started")) { cleanup(); resolve(); }
+			};
+			const interval = setInterval(check, 100);
+			const onExit = (code: number | null) => { cleanup(); reject(new Error(`helper exited (code ${code}) before starting: ${capture.stdout.slice(-300)}`)); };
+			proc.once("exit", onExit);
+			function cleanup() { clearTimeout(timer); clearInterval(interval); proc.off("exit", onExit); }
+		});
+
+		send({ type: "native-capture:started", outputPath: msg.outputPath, sourceWidth: 0, sourceHeight: 0 });
+	} catch (err) {
+		setNativeScreenRecordingActive(false);
+		setNoCursorTelemetryMode(false);
+		if (activeNativeCapture) { try { activeNativeCapture.proc.kill(); } catch { /* ignore */ } activeNativeCapture = null; }
+		send({ type: "native-capture:error", message: `Failed to start native capture: ${String(err)}` });
+	}
+}
+
+async function handleNativeCaptureStop(send: (resp: unknown) => void): Promise<void> {
+	const capture = activeNativeCapture;
+	if (!capture) {
+		send({ type: "native-capture:error", message: "No active native capture to stop" });
+		return;
+	}
+	try {
+		const videoPath = await new Promise<string>((resolve, reject) => {
+			const timer = setTimeout(() => reject(new Error("ScreenCaptureKit helper did not stop within 60s")), 60_000);
+			capture.proc.once("exit", (code) => {
+				clearTimeout(timer);
+				const match = capture.stdout.match(/Recording stopped\. Output path: (.+)/);
+				if (match?.[1]) return resolve(match[1].trim());
+				if (code === 0) return resolve(capture.outputPath);
+				reject(new Error(`helper exited with code ${code}: ${capture.stdout.slice(-300)}`));
+			});
+			// Ask the helper to finalize.
+			try { capture.proc.stdin.write("stop\n"); } catch { /* helper may already be closing */ }
+		});
+		send({ type: "native-capture:finished", videoPath });
+	} catch (err) {
+		send({ type: "native-capture:error", message: `Failed to stop native capture: ${String(err)}` });
+	} finally {
+		setNativeScreenRecordingActive(false);
+		setNoCursorTelemetryMode(false);
+		activeNativeCapture = null;
+	}
 }
 
 // ── Child-process lifecycle ───────────────────────────────────────────────────
@@ -388,12 +455,34 @@ function forkPhasedChild(
 			return;
 		}
 
+		// Native-capture bridge: the pipeline child asks Electron to drive the
+		// ScreenCaptureKit helper (it cannot call Electron APIs directly).
+		if (m["type"] === "native-capture:start") {
+			void handleNativeCaptureStart(m as unknown as NativeCaptureStartMsg, (resp) => {
+				child.send(resp as Parameters<typeof child.send>[0]);
+			});
+			return;
+		}
+		if (m["type"] === "native-capture:stop") {
+			void handleNativeCaptureStop((resp) => {
+				child.send(resp as Parameters<typeof child.send>[0]);
+			});
+			return;
+		}
+
 		relay(msg);
 	});
 
 	child.once("exit", (code) => {
 		if (activePipeline?.child === child) {
 			activePipeline = null;
+		}
+		// If the record child died mid-capture, tear down the helper so it doesn't leak.
+		if (activeNativeCapture) {
+			try { activeNativeCapture.proc.kill(); } catch { /* ignore */ }
+			activeNativeCapture = null;
+			setNativeScreenRecordingActive(false);
+			setNoCursorTelemetryMode(false);
 		}
 		// If the child died without delivering a result, surface why.
 		if (!sawPhaseResult && code !== 0) {
@@ -470,15 +559,24 @@ export function registerAutoDemoHandlers(): void {
 		},
 	);
 
-	// Record phase
+	// Record phase — use the high-fidelity native ScreenCaptureKit backend on
+	// macOS (falls back to Playwright webm elsewhere or if the helper is missing).
 	ipcMain.handle(
 		"auto-demo:record",
 		(event: { sender: WebContents }, opts: { scriptJson: string; outDir?: string }) => {
+			const nativeEnv: Record<string, string> = {};
+			if (process.platform === "darwin") {
+				nativeEnv.PIPELINE_RECORD_BACKEND = "native";
+				try {
+					nativeEnv.PIPELINE_FFMPEG_PATH = getFfmpegBinaryPath();
+				} catch { /* fiducial post-solve falls back to scale-only segments */ }
+			}
 			forkPhasedChild(
 				"record",
 				{
 					PIPELINE_SCRIPT_JSON: opts.scriptJson,
 					...(opts.outDir ? { PIPELINE_OUT_DIR: opts.outDir } : {}),
+					...nativeEnv,
 				},
 				event.sender,
 			);
@@ -494,6 +592,7 @@ export function registerAutoDemoHandlers(): void {
 			traceJsonPath: string;
 			productionUrl?: string;
 			outDir?: string;
+			zoomAggressiveness?: number;
 		}) => {
 			forkPhasedChild(
 				"render",
@@ -502,6 +601,7 @@ export function registerAutoDemoHandlers(): void {
 					PIPELINE_TRACE_JSON_PATH: opts.traceJsonPath,
 					...(opts.productionUrl ? { PIPELINE_PRODUCTION_URL: opts.productionUrl } : {}),
 					...(opts.outDir ? { PIPELINE_OUT_DIR: opts.outDir } : {}),
+					...(opts.zoomAggressiveness ? { PIPELINE_ZOOM_AGGRESSIVENESS: String(opts.zoomAggressiveness) } : {}),
 				},
 				event.sender,
 			);
@@ -524,11 +624,11 @@ export function registerAutoDemoHandlers(): void {
 
 	// User decision from the video-review window — relay to the Auto Demo window
 	// (which mounts useAutoDemoStore and listens for "video-review:decision").
-	ipcMain.on("video-review:user-decision", (_event, decision: "approve" | "modify") => {
+	ipcMain.on("video-review:user-decision", (_event, decision: "approve" | "modify", zoomAggressiveness?: number) => {
 		closeVideoReviewWindow();
 		const target = getAutoDemoWindow() ?? getHudOverlayWindow();
 		if (target && !target.isDestroyed()) {
-			target.webContents.send("video-review:decision", decision);
+			target.webContents.send("video-review:decision", decision, zoomAggressiveness);
 		}
 	});
 }
