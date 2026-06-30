@@ -6,6 +6,7 @@ import {
 	MicrophoneSlashIcon,
 	MinusIcon,
 	MonitorIcon,
+	MagicWandIcon,
 	RocketLaunchIcon,
 	TimerIcon,
 	VideoCameraIcon,
@@ -353,16 +354,45 @@ function LaunchWindowContent() {
 				<div className={styles.recDot} />
 			</button>
 
+			{/* Auto Demo — beta */}
+			<div className={`relative ${styles.electronNoDrag}`}>
+				<Button
+					variant="ghost"
+					size="icon"
+					iconSize="lg"
+					title="Auto Demo (beta)"
+					style={{ color: '#f97316', opacity: 0.75 }}
+					onClick={() => { void window.electronAPI?.openAutoDemoWindow?.(); }}
+				>
+					<RocketLaunchIcon size={18} />
+				</Button>
+				<span style={{
+					position: 'absolute',
+					top: 1,
+					right: 0,
+					fontSize: 8,
+					fontWeight: 700,
+					lineHeight: 1,
+					padding: '1px 3px',
+					borderRadius: 3,
+					background: '#eab308',
+					color: '#fff',
+					pointerEvents: 'none',
+					letterSpacing: 0.2,
+				}}>β</span>
+			</div>
+
+			{/* Auto Zoom */}
 			<Button
 				variant="ghost"
 				size="icon"
 				iconSize="lg"
-				title="Auto Demo"
+				title="Auto Zoom"
 				className={`${styles.electronNoDrag}`}
-				style={{ color: '#f97316', opacity: 0.75 }}
-				onClick={() => { void window.electronAPI?.openAutoDemoWindow?.(); }}
+				style={{ color: '#6366f1', opacity: 0.85 }}
+				onClick={() => { void window.electronAPI?.openAutoZoomWindow?.(); }}
 			>
-				<RocketLaunchIcon size={18} />
+				<MagicWandIcon size={18} />
 			</Button>
 
 			<Separator orientation="vertical" className="mx-[5px] h-6" />

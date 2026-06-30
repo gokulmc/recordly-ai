@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowLeftIcon, RecordIcon, ArrowsCounterClockwiseIcon, LockKeyIcon } from "@phosphor-icons/react";
+import { ArrowLeftIcon, RecordIcon, ArrowsCounterClockwiseIcon, LockKeyIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { AutoDemoFlowchart } from "../AutoDemoFlowchart";
 import type { AppFeatureMap, RecordingScript } from "../useAutoDemoStore";
 
@@ -62,6 +62,29 @@ export function Step2Script({ featureMap, script, isRecording, isRegenerating, a
             >
               ← Add demo credentials
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Focus-not-found notice — the refinement asked for something not in the captured UI */}
+      {script.focusNotice && (
+        <div style={{
+          flexShrink: 0,
+          margin: "10px 16px 0",
+          padding: "10px 12px",
+          borderRadius: 9,
+          border: "1px solid rgba(234,179,8,0.35)",
+          background: "rgba(234,179,8,0.07)",
+          display: "flex",
+          alignItems: "flex-start",
+          gap: 8,
+        }}>
+          <WarningCircleIcon size={15} weight="fill" style={{ color: "#ca8a04", flexShrink: 0, marginTop: 1 }} />
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#92400e" }}>Couldn't find that in the app</div>
+            <div style={{ fontSize: 12, color: "#92400e", opacity: 0.85, lineHeight: 1.4, marginTop: 2 }}>
+              {script.focusNotice}
+            </div>
           </div>
         </div>
       )}

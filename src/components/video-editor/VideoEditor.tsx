@@ -218,6 +218,8 @@ import {
 	type ZoomTransitionEasing,
 } from "./types";
 import VideoPlayback, { VideoPlaybackRef } from "./VideoPlayback";
+import { AutoZoomPanel } from "./AutoZoomPanel";
+import type { AutoZoomAnalysis } from "@/components/auto-zoom/useAutoZoomStore";
 import {
 	buildLoopedCursorTelemetry,
 	getDisplayedTimelineWindowMs,
@@ -522,6 +524,7 @@ export default function VideoEditor() {
 	);
 	const [resolvedWebcamVideoUrl, setResolvedWebcamVideoUrl] = useState<string | null>(null);
 	const [zoomRegions, setZoomRegions] = useState<ZoomRegion[]>([]);
+	const [autoZoomAnalysis, setAutoZoomAnalysis] = useState<AutoZoomAnalysis | null>(null);
 	const [cursorTelemetry, setCursorTelemetry] = useState<CursorTelemetryPoint[]>([]);
 	// Tracks the videoSourcePath for which the cursor telemetry IPC has already
 	// resolved. The smoke-export auto-trigger waits on this so long recordings
@@ -2129,6 +2132,11 @@ export default function VideoEditor() {
 					(max, region) => Math.max(max, region.zIndex),
 					0,
 				) + 1;
+
+			// Detect auto-zoom projects and surface the refinement panel
+			const rawProject = project as unknown as Record<string, unknown>;
+			const rawAutoZoom = rawProject.autoZoom as Record<string, unknown> | undefined;
+			setAutoZoomAnalysis((rawAutoZoom?.analysis as AutoZoomAnalysis) ?? null);
 
 			resetEditorHistoryStack(editorHistoryRef.current);
 			applyingHistoryRef.current = false;
@@ -6654,6 +6662,13 @@ export default function VideoEditor() {
 						</div>
 					</div>
 				</div>
+				{autoZoomAnalysis && (
+					<AutoZoomPanel
+						analysis={autoZoomAnalysis}
+						zoomRegions={zoomRegions}
+						onZoomRegionsUpdate={(regions) => setZoomRegions(regions as ZoomRegion[])}
+					/>
+				)}
 				<div
 					className="flex-shrink-0 flex flex-col"
 					style={{

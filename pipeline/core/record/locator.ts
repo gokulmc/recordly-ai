@@ -98,7 +98,9 @@ function browserExtract(maxElements: number): CatalogEntry[] {
     if (out.length >= maxElements) break;
     const rect = el.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) continue;
-    if (rect.bottom < 0 || rect.top > window.innerHeight * 2) continue;
+    // Capture a generous band around the viewport. The crawl scrolls and re-extracts,
+    // so below-the-fold controls come into range across passes.
+    if (rect.bottom < -window.innerHeight || rect.top > window.innerHeight * 3) continue;
 
     const tag = el.tagName.toLowerCase();
     const explicitRole = el.getAttribute("role") || "";
@@ -127,8 +129,10 @@ function browserExtract(maxElements: number): CatalogEntry[] {
       target = { kind: "css", value: tag };
     }
 
-    // Dedupe by (role|name|kind) so repeated controls don't flood the catalog.
-    const key = `${target.kind}:${role}:${name}`;
+    // Dedupe by a FULL target descriptor (+ tag) so genuinely distinct controls
+    // that merely share a role/name (e.g. several "Save" buttons) aren't collapsed.
+    const targetSig = target.kind === "role" ? `role/${target.role}/${target.name}` : `${target.kind}/${target.value}`;
+    const key = `${targetSig}:${role}:${name}:${tag}`;
     if (seen.has(key)) continue;
     seen.add(key);
 
@@ -145,8 +149,18 @@ function browserExtract(maxElements: number): CatalogEntry[] {
   return out;
 }
 
+/**
+ * Stable dedupe key for a catalog entry — must agree with the dedupe inside
+ * browserExtract so the crawl can merge catalogs from multiple reveal passes.
+ */
+export function catalogKey(e: CatalogEntry): string {
+  const t = e.target;
+  const targetSig = t.kind === "role" ? `role/${t.role}/${t.name}` : `${t.kind}/${t.value}`;
+  return `${targetSig}:${e.role}:${e.text}:${e.tag}`;
+}
+
 /** Extract the live element catalog from the current page state. */
-export async function extractCatalog(page: Page, maxElements = 40): Promise<CatalogEntry[]> {
+export async function extractCatalog(page: Page, maxElements = 60): Promise<CatalogEntry[]> {
   try {
     // tsx/esbuild wraps inner named functions with `__name`, which is undefined
     // in the page context — shim it so serialized helpers don't ReferenceError.

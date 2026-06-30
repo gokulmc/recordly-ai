@@ -55,7 +55,7 @@ export function VideoReviewWindow({ videoPath }: Props) {
           step={1}
           value={zoom}
           onChange={(e) => setZoom(Number(e.target.value))}
-          className="w-72 accent-green-500"
+          className="zoom-density-slider w-72"
           aria-label="Zoom density"
         />
         <div className="flex justify-between w-72 text-[10px] text-white/40">

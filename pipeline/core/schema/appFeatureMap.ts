@@ -4,6 +4,7 @@
  */
 
 import type { CatalogEntry, Target } from "./target.js";
+import type { DemoStep } from "../record/types.js";
 
 export interface AppFeature {
   /** Short human-readable name */
@@ -20,6 +21,13 @@ export interface AppFeature {
   likelySelectors?: string[];
   /** Real interactive elements found on this feature's page (authenticated crawl) */
   liveElements?: CatalogEntry[];
+  /**
+   * Bounded, durable-Target interactions the crawl performed to reveal result-state
+   * elements (e.g. fill a query → click Generate → wait). Replayed by the recorder
+   * before interacting with any element flagged `revealed`, so the demo reaches the
+   * state where that element exists.
+   */
+  revealSteps?: DemoStep[];
   /** Suggested interaction flow for this feature */
   suggestedFlow: string[];
 }

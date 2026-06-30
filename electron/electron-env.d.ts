@@ -993,6 +993,22 @@ interface Window {
 			callback: (decision: "approve" | "modify", zoomAggressiveness?: number) => void,
 		) => () => void;
 		sendVideoReviewDecision: (decision: "approve" | "modify", zoomAggressiveness?: number) => void;
+
+		// ── Auto Zoom ────────────────────────────────────────────────────
+		openAutoZoomWindow: () => Promise<void>;
+		autoZoomStartRecord: (opts: { sourceId?: string }) => Promise<{ success: boolean }>;
+		autoZoomStopRecord: (result: { videoPath: string; cursorPath: string }) => Promise<{ videoPath: string; cursorPath: string }>;
+		autoZoomAnalyze: (opts: { videoPath: string; cursorPath: string }) => Promise<{ success: boolean }>;
+		autoZoomRefineAnalysis: (feedback: string) => Promise<{ success: boolean }>;
+		autoZoomGenerate: (opts: { enableCaptions: boolean; enableAudio: boolean }) => Promise<{ projectPath: string }>;
+		autoZoomRefinement: (query: string) => Promise<{ success: boolean }>;
+		autoZoomRefineRegions: (opts: { query: string; zoomRegions: unknown[] }) => Promise<{ success: boolean; zoomRegions?: unknown[]; message?: string; error?: string }>;
+		autoZoomCancel: () => Promise<void>;
+		onAutoZoomProgress: (
+			callback: (evt: { stage: string; status: "running" | "done" | "error"; message: string; payload?: unknown }) => void,
+		) => () => void;
+		onAutoZoomPillStop: (callback: () => void) => () => void;
+		sendAutoZoomPillStop: () => void;
 	};
 }
 

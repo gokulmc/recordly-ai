@@ -1088,4 +1088,36 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	sendVideoReviewDecision: (decision: "approve" | "modify", zoomAggressiveness?: number) => {
 		ipcRenderer.send("video-review:user-decision", decision, zoomAggressiveness);
 	},
+
+	// ── Auto Zoom ────────────────────────────────────────────────────────
+	openAutoZoomWindow: () => ipcRenderer.invoke("auto-zoom:open-window"),
+	autoZoomStartRecord: (opts: { sourceId?: string }) =>
+		ipcRenderer.invoke("auto-zoom:start-record", opts) as Promise<{ success: boolean }>,
+	autoZoomStopRecord: (result: { videoPath: string; cursorPath: string }) =>
+		ipcRenderer.invoke("auto-zoom:stop-record", result) as Promise<{ videoPath: string; cursorPath: string }>,
+	autoZoomAnalyze: (opts: { videoPath: string; cursorPath: string }) =>
+		ipcRenderer.invoke("auto-zoom:analyze", opts) as Promise<{ success: boolean }>,
+	autoZoomRefineAnalysis: (feedback: string) =>
+		ipcRenderer.invoke("auto-zoom:refine-analysis", feedback) as Promise<{ success: boolean }>,
+	autoZoomGenerate: (opts: { enableCaptions: boolean; enableAudio: boolean }) =>
+		ipcRenderer.invoke("auto-zoom:generate", opts) as Promise<{ projectPath: string }>,
+	autoZoomRefinement: (query: string) =>
+		ipcRenderer.invoke("auto-zoom:refinement", query) as Promise<{ success: boolean }>,
+	autoZoomCancel: () => ipcRenderer.invoke("auto-zoom:cancel"),
+	autoZoomRefineRegions: (opts: { query: string; zoomRegions: unknown[] }) =>
+		ipcRenderer.invoke("auto-zoom:refine-regions", opts) as Promise<{ success: boolean; zoomRegions?: unknown[]; message?: string; error?: string }>,
+	onAutoZoomProgress: (
+		callback: (evt: { stage: string; status: "running" | "done" | "error"; message: string; payload?: unknown }) => void,
+	) => {
+		const listener = (_event: Electron.IpcRendererEvent, evt: unknown) =>
+			callback(evt as Parameters<typeof callback>[0]);
+		ipcRenderer.on("auto-zoom:progress", listener);
+		return () => ipcRenderer.removeListener("auto-zoom:progress", listener);
+	},
+	onAutoZoomPillStop: (callback: () => void) => {
+		const listener = () => callback();
+		ipcRenderer.on("auto-zoom:pill-stop", listener);
+		return () => ipcRenderer.removeListener("auto-zoom:pill-stop", listener);
+	},
+	sendAutoZoomPillStop: () => ipcRenderer.send("auto-zoom:pill-stop"),
 });

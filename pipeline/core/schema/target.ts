@@ -23,4 +23,6 @@ export interface CatalogEntry {
   tag: string;
   enabled: boolean;
   bbox: { x: number; y: number; w: number; h: number };
+  /** True if this element only became visible after a reveal interaction (not on initial load). */
+  revealed?: boolean;
 }

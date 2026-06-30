@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { AutoDemoWindow } from "./components/auto-demo/AutoDemoWindow";
+import { AutoZoomWindow } from "./components/auto-zoom/AutoZoomWindow";
 import { VideoReviewWindow } from "./components/auto-demo/VideoReviewWindow";
 import { CountdownOverlay } from "./components/countdown/CountdownOverlay";
 import { LaunchWindow } from "./components/launch/LaunchWindow";
@@ -81,6 +82,8 @@ export default function App() {
 			);
 		case "auto-demo":
 			return <AutoDemoWindow />;
+		case "auto-zoom":
+			return <AutoZoomWindow />;
 		case "video-review": {
 			const params = new URLSearchParams(window.location.search);
 			const videoPath = params.get("videoPath") ?? "";

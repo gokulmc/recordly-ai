@@ -93,6 +93,7 @@ export async function generateScriptPhase(
   const enriched = await crawlAndEnrich(featureMap, opts.productionUrl, {
     authEmail: opts.authEmail,
     authPassword: opts.authPassword,
+    focusArea: opts.focusArea ?? undefined,
   });
 
   send({

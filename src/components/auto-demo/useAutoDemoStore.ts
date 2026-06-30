@@ -35,6 +35,8 @@ export interface DemoStep {
 export interface RecordingScript {
   startUrl: string;
   steps: DemoStep[];
+  /** Set when a refinement asked for a control the captured UI didn't contain. */
+  focusNotice?: string;
 }
 
 export type StageId = "ingest" | "crawl" | "script" | "record" | "derive" | "assemble" | "done" | "error";

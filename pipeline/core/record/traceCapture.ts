@@ -376,7 +376,17 @@ export async function traceScroll(
 	deltaY: number,
 ): Promise<void> {
 	const seg = currentSegment(trace);
-	await page.evaluate((dy: number) => window.scrollBy(0, dy), deltaY);
+	// Scroll incrementally (small paced steps) so the recorded video pans through
+	// the content like a real user, instead of teleporting in one jump.
+	const total = Math.abs(deltaY);
+	const dir = deltaY < 0 ? -1 : 1;
+	const stepPx = 60;
+	const stepCount = Math.max(1, Math.ceil(total / stepPx));
+	for (let i = 0; i < stepCount; i++) {
+		const inc = dir * Math.min(stepPx, total - i * stepPx);
+		await page.evaluate((dy: number) => window.scrollBy(0, dy), inc);
+		await page.waitForTimeout(16); // ~60fps pacing
+	}
 	// Small settle wait
 	await page.waitForTimeout(100);
 	const tMs = perfNowToEventTms(performance.now(), seg);

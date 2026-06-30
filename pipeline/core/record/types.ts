@@ -48,6 +48,12 @@ export interface RecordingScript {
 	steps: DemoStep[];
 	viewportWidth?: number;
 	viewportHeight?: number;
+	/**
+	 * Set when the user's refinement asked for something the captured UI didn't
+	 * contain (so the focus action couldn't be honored). Surfaced to the user in
+	 * Step 2 so they aren't left guessing why their request had no effect.
+	 */
+	focusNotice?: string;
 }
 
 export interface RecorderConfig {
