@@ -36,6 +36,7 @@ export function AutoZoomWindow() {
     progresses, pushProgress,
     enableCaptions, setEnableCaptions,
     enableAudio, setEnableAudio,
+    enableAutoCrop, setEnableAutoCrop,
     projectPath,
     error,
   } = store;
@@ -43,6 +44,30 @@ export function AutoZoomWindow() {
   const prevStepRef = useRef(step);
   const slideDir = step > prevStepRef.current ? 1 : -1;
   useEffect(() => { prevStepRef.current = step; }, [step]);
+
+  function handleRecordingComplete(vPath: string, cPath: string) {
+    setVideoPath(vPath);
+    setCursorPath(cPath);
+    setStep(2);
+  }
+
+  // Arm capture handoff only while on Step 1 — the next HUD recording to
+  // finalize is then handed to Auto Zoom instead of opening the editor.
+  useEffect(() => {
+    if (step !== 1) return;
+    void window.electronAPI?.autoZoomSetArmed?.(true);
+    return () => {
+      void window.electronAPI?.autoZoomSetArmed?.(false);
+    };
+  }, [step]);
+
+  // The HUD notifies us here once an armed recording finalizes.
+  useEffect(() => {
+    const cleanup = window.electronAPI?.onAutoZoomRecordingFinalized?.(({ videoPath: vPath, cursorPath: cPath }) => {
+      handleRecordingComplete(vPath, cPath);
+    });
+    return () => cleanup?.();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Subscribe to backend progress events
   useEffect(() => {
@@ -52,15 +77,9 @@ export function AutoZoomWindow() {
     return () => cleanup?.();
   }, [pushProgress]);
 
-  function handleRecordingComplete(vPath: string, cPath: string) {
-    setVideoPath(vPath);
-    setCursorPath(cPath);
-    setStep(2);
-  }
-
   async function handleGenerate() {
     setStep(3);
-    await window.electronAPI?.autoZoomGenerate?.({ enableCaptions, enableAudio });
+    await window.electronAPI?.autoZoomGenerate?.({ enableCaptions, enableAudio, enableAutoCrop });
   }
 
   async function handleOpenProject() {
@@ -104,7 +123,7 @@ export function AutoZoomWindow() {
               style={{ display: "flex", flexDirection: "column", flex: 1, overflowY: "auto" }}
             >
               <StepHeader title="Record your walkthrough" step={1} />
-              <Step1Record onRecordingComplete={handleRecordingComplete} styles={styles} />
+              <Step1Record styles={styles} />
             </motion.div>
           )}
 
@@ -132,6 +151,8 @@ export function AutoZoomWindow() {
                 setEnableCaptions={setEnableCaptions}
                 enableAudio={enableAudio}
                 setEnableAudio={setEnableAudio}
+                enableAutoCrop={enableAutoCrop}
+                setEnableAutoCrop={setEnableAutoCrop}
                 onGenerate={() => void handleGenerate()}
                 styles={styles}
               />

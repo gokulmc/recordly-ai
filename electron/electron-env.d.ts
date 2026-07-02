@@ -248,6 +248,7 @@ interface Window {
 			path?: string;
 			message?: string;
 			error?: string;
+			autoZoomHandoff?: boolean;
 		}>;
 		recoverNativeScreenRecording: () => Promise<{
 			success: boolean;
@@ -996,19 +997,19 @@ interface Window {
 
 		// ── Auto Zoom ────────────────────────────────────────────────────
 		openAutoZoomWindow: () => Promise<void>;
-		autoZoomStartRecord: (opts: { sourceId?: string }) => Promise<{ success: boolean }>;
-		autoZoomStopRecord: (result: { videoPath: string; cursorPath: string }) => Promise<{ videoPath: string; cursorPath: string }>;
+		autoZoomSetArmed: (armed: boolean) => Promise<{ success: boolean }>;
 		autoZoomAnalyze: (opts: { videoPath: string; cursorPath: string }) => Promise<{ success: boolean }>;
 		autoZoomRefineAnalysis: (feedback: string) => Promise<{ success: boolean }>;
-		autoZoomGenerate: (opts: { enableCaptions: boolean; enableAudio: boolean }) => Promise<{ projectPath: string }>;
+		autoZoomGenerate: (opts: { enableCaptions: boolean; enableAudio: boolean; enableAutoCrop: boolean }) => Promise<{ projectPath: string }>;
 		autoZoomRefinement: (query: string) => Promise<{ success: boolean }>;
 		autoZoomRefineRegions: (opts: { query: string; zoomRegions: unknown[] }) => Promise<{ success: boolean; zoomRegions?: unknown[]; message?: string; error?: string }>;
 		autoZoomCancel: () => Promise<void>;
 		onAutoZoomProgress: (
 			callback: (evt: { stage: string; status: "running" | "done" | "error"; message: string; payload?: unknown }) => void,
 		) => () => void;
-		onAutoZoomPillStop: (callback: () => void) => () => void;
-		sendAutoZoomPillStop: () => void;
+		onAutoZoomRecordingFinalized: (
+			callback: (result: { videoPath: string; cursorPath: string }) => void,
+		) => () => void;
 	};
 }
 

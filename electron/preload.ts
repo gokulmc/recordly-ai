@@ -1091,15 +1091,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
 	// ── Auto Zoom ────────────────────────────────────────────────────────
 	openAutoZoomWindow: () => ipcRenderer.invoke("auto-zoom:open-window"),
-	autoZoomStartRecord: (opts: { sourceId?: string }) =>
-		ipcRenderer.invoke("auto-zoom:start-record", opts) as Promise<{ success: boolean }>,
-	autoZoomStopRecord: (result: { videoPath: string; cursorPath: string }) =>
-		ipcRenderer.invoke("auto-zoom:stop-record", result) as Promise<{ videoPath: string; cursorPath: string }>,
+	autoZoomSetArmed: (armed: boolean) =>
+		ipcRenderer.invoke("auto-zoom:set-armed", armed) as Promise<{ success: boolean }>,
 	autoZoomAnalyze: (opts: { videoPath: string; cursorPath: string }) =>
 		ipcRenderer.invoke("auto-zoom:analyze", opts) as Promise<{ success: boolean }>,
 	autoZoomRefineAnalysis: (feedback: string) =>
 		ipcRenderer.invoke("auto-zoom:refine-analysis", feedback) as Promise<{ success: boolean }>,
-	autoZoomGenerate: (opts: { enableCaptions: boolean; enableAudio: boolean }) =>
+	autoZoomGenerate: (opts: { enableCaptions: boolean; enableAudio: boolean; enableAutoCrop: boolean }) =>
 		ipcRenderer.invoke("auto-zoom:generate", opts) as Promise<{ projectPath: string }>,
 	autoZoomRefinement: (query: string) =>
 		ipcRenderer.invoke("auto-zoom:refinement", query) as Promise<{ success: boolean }>,
@@ -1114,10 +1112,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		ipcRenderer.on("auto-zoom:progress", listener);
 		return () => ipcRenderer.removeListener("auto-zoom:progress", listener);
 	},
-	onAutoZoomPillStop: (callback: () => void) => {
-		const listener = () => callback();
-		ipcRenderer.on("auto-zoom:pill-stop", listener);
-		return () => ipcRenderer.removeListener("auto-zoom:pill-stop", listener);
+	onAutoZoomRecordingFinalized: (
+		callback: (result: { videoPath: string; cursorPath: string }) => void,
+	) => {
+		const listener = (_event: Electron.IpcRendererEvent, result: unknown) =>
+			callback(result as Parameters<typeof callback>[0]);
+		ipcRenderer.on("auto-zoom:recording-finalized", listener);
+		return () => ipcRenderer.removeListener("auto-zoom:recording-finalized", listener);
 	},
-	sendAutoZoomPillStop: () => ipcRenderer.send("auto-zoom:pill-stop"),
 });

@@ -1224,7 +1224,12 @@ export function closeVideoReviewWindow(): void {
 // ── Auto Zoom ───────────────────────────────────────────────────────────────────
 
 let autoZoomWindow: BrowserWindow | null = null;
-let autoZoomPillWindow: BrowserWindow | null = null;
+let autoZoomWindowClosedListener: (() => void) | null = null;
+
+/** Register a callback fired when the Auto Zoom window closes (used to disarm capture). */
+export function setAutoZoomWindowClosedListener(listener: (() => void) | null): void {
+	autoZoomWindowClosedListener = listener;
+}
 
 export function createAutoZoomWindow(): BrowserWindow {
 	if (autoZoomWindow && !autoZoomWindow.isDestroyed()) {
@@ -1255,7 +1260,7 @@ export function createAutoZoomWindow(): BrowserWindow {
 
 	win.on("closed", () => {
 		if (autoZoomWindow === win) autoZoomWindow = null;
-		closeAutoZoomPillWindow();
+		autoZoomWindowClosedListener?.();
 	});
 
 	if (VITE_DEV_SERVER_URL) {
@@ -1283,59 +1288,5 @@ export function showAutoZoomWindow(): void {
 	if (autoZoomWindow && !autoZoomWindow.isDestroyed()) {
 		autoZoomWindow.show();
 		autoZoomWindow.focus();
-	}
-}
-
-/** Small always-on-top pill shown during recording so the user can stop. */
-export function createAutoZoomPillWindow(): BrowserWindow {
-	if (autoZoomPillWindow && !autoZoomPillWindow.isDestroyed()) {
-		return autoZoomPillWindow;
-	}
-
-	const { screen } = app.isReady()
-		? require("electron")
-		: { screen: null as unknown as typeof import("electron").screen };
-	const primary = screen.getPrimaryDisplay();
-	const { width } = primary.workAreaSize;
-
-	const win = new BrowserWindow({
-		width: 160,
-		height: 36,
-		x: Math.round(width / 2 - 80),
-		y: 8,
-		frame: false,
-		transparent: true,
-		alwaysOnTop: true,
-		skipTaskbar: true,
-		focusable: true,
-		resizable: false,
-		movable: true,
-		webPreferences: {
-			preload: path.join(electronWindowsDir, "preload.mjs"),
-			contextIsolation: true,
-			nodeIntegration: false,
-		},
-	});
-
-	autoZoomPillWindow = win;
-	win.on("closed", () => {
-		if (autoZoomPillWindow === win) autoZoomPillWindow = null;
-	});
-
-	if (VITE_DEV_SERVER_URL) {
-		win.loadURL(VITE_DEV_SERVER_URL + "?windowType=auto-zoom-pill");
-	} else {
-		win.loadFile(path.join(RENDERER_DIST, "index.html"), {
-			query: { windowType: "auto-zoom-pill" },
-		});
-	}
-
-	return win;
-}
-
-export function closeAutoZoomPillWindow(): void {
-	if (autoZoomPillWindow && !autoZoomPillWindow.isDestroyed()) {
-		autoZoomPillWindow.close();
-		autoZoomPillWindow = null;
 	}
 }

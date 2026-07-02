@@ -13,6 +13,8 @@ import {
 	systemPreferences,
 } from "electron";
 import { showCursor } from "../../cursorHider";
+import { hideAutoZoomWindow, showAutoZoomWindow } from "../../windows";
+import { isAutoZoomArmed, notifyAutoZoomRecordingFinalized } from "../autoZoom/handoff";
 import { getMonitorHandles } from "../monitorResolver";
 import { ALLOW_RECORDLY_WINDOW_CAPTURE } from "../constants";
 import { startWindowBoundsCapture, stopWindowBoundsCapture } from "../cursor/bounds";
@@ -1000,7 +1002,9 @@ export function registerRecordingHandlers(
 					console.warn("Failed to persist cursor telemetry during native stop:", error);
 				}
 
-				return { success: true, path: finalVideoPath };
+				const autoZoomHandoff = notifyAutoZoomRecordingFinalized(finalVideoPath);
+
+				return { success: true, path: finalVideoPath, autoZoomHandoff };
 			} catch (error) {
 				console.error("Failed to stop native Windows capture:", error);
 				const fallbackPath = await resolveExistingPath(
@@ -1818,6 +1822,13 @@ export function registerRecordingHandlers(
 	ipcMain.handle(
 		"set-recording-state",
 		(_, recording: boolean, options?: { noCursorTelemetry?: boolean }) => {
+			if (isAutoZoomArmed()) {
+				// Auto Zoom's window is alwaysOnTop and would end up in the capture —
+				// hide it while recording; show it back if the recording is interrupted
+				// (a normal finalize already re-shows it via notifyAutoZoomRecordingFinalized).
+				if (recording) hideAutoZoomWindow();
+				else showAutoZoomWindow();
+			}
 			if (recording) {
 				if (options?.noCursorTelemetry) {
 					setNoCursorTelemetryMode(true);

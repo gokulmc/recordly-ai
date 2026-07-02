@@ -9,6 +9,14 @@ export interface AutoZoomFeature {
   endMs: number;
   interactions: Array<{ label: string; timeMs: number }>;
   narration: string;
+  importance?: "low" | "medium" | "high";
+}
+
+export interface AutoZoomContentRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 export interface AutoZoomAnalysis {
@@ -16,6 +24,7 @@ export interface AutoZoomAnalysis {
   appCategory: string;
   features: AutoZoomFeature[];
   totalDurationMs: number;
+  contentRect?: AutoZoomContentRect;
 }
 
 export interface AutoZoomProgress {
@@ -36,6 +45,7 @@ export interface AutoZoomState {
   progresses: AutoZoomProgress[];
   enableCaptions: boolean;
   enableAudio: boolean;
+  enableAutoCrop: boolean;
   projectPath: string | null;
   error: string | null;
 }
@@ -51,6 +61,7 @@ export function useAutoZoomStore() {
   const [progresses, setProgresses] = useState<AutoZoomProgress[]>([]);
   const [enableCaptions, setEnableCaptions] = useState(true);
   const [enableAudio, setEnableAudio] = useState(true);
+  const [enableAutoCrop, setEnableAutoCrop] = useState(true);
   const [projectPath, setProjectPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -81,6 +92,9 @@ export function useAutoZoomStore() {
     setCursorPath("");
     setAnalysis(null);
     setProgresses([]);
+    setEnableCaptions(true);
+    setEnableAudio(true);
+    setEnableAutoCrop(true);
     setProjectPath(null);
     setError(null);
   }, []);
@@ -94,6 +108,7 @@ export function useAutoZoomStore() {
     progresses, pushProgress,
     enableCaptions, setEnableCaptions,
     enableAudio, setEnableAudio,
+    enableAutoCrop, setEnableAutoCrop,
     projectPath,
     error, setError,
     reset,

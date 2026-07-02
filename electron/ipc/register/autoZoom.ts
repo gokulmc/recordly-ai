@@ -1,8 +1,9 @@
 /**
  * Auto Zoom IPC handlers.
  *
- * Flow: record (reuses native capture) → extract frames → LLM vision analysis →
- * user approves mindmap → derive zoom/cut/CC/audio → assemble .recordly → open in editor.
+ * Flow: record with Recordly's own HUD (armed handoff) → extract frames → LLM
+ * vision analysis → user approves mindmap → derive zoom/crop/CC/audio →
+ * assemble .recordly → open in editor.
  *
  * The LLM pass uses Claude claude-sonnet-4-6 (vision) via the Anthropic SDK, so it
  * understands the actual app on screen rather than relying on DOM extraction.
@@ -17,39 +18,17 @@ import { ipcMain, type WebContents } from "electron";
 import Anthropic from "@anthropic-ai/sdk";
 import {
   createAutoZoomWindow,
-  createAutoZoomPillWindow,
-  closeAutoZoomPillWindow,
-  hideAutoZoomWindow,
   showAutoZoomWindow,
-  getAutoZoomWindow,
+  setAutoZoomWindowClosedListener,
 } from "../../windows";
+import { setAutoZoomArmed, setAutoZoomFinalizedCallback } from "../autoZoom/handoff";
+import { deriveZoomRegionsFromCursor } from "../autoZoom/zoomFromCursor";
+import { IDENTITY_CROP } from "../autoZoom/types";
+import type { AutoZoomAnalysis, AutoZoomContentRect, AutoZoomProgress } from "../autoZoom/types";
 import { getFfmpegBinaryPath } from "../ffmpeg/binary";
 import { rememberApprovedLocalReadPath } from "../project/manager";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-export interface AutoZoomFeature {
-  name: string;
-  description: string;
-  startMs: number;
-  endMs: number;
-  interactions: Array<{ label: string; timeMs: number }>;
-  narration: string;
-}
-
-export interface AutoZoomAnalysis {
-  appName: string;
-  appCategory: string;
-  features: AutoZoomFeature[];
-  totalDurationMs: number;
-}
-
-export interface AutoZoomProgress {
-  stage: string;
-  status: "running" | "done" | "error";
-  message: string;
-  payload?: unknown;
-}
+export type { AutoZoomAnalysis, AutoZoomFeature, AutoZoomProgress } from "../autoZoom/types";
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -132,11 +111,20 @@ const ANALYSIS_SCHEMA = `{
       "startMs": number,
       "endMs": number,
       "interactions": [{ "label": "string", "timeMs": number }],
-      "narration": "string (one short sentence for the voiceover)"
+      "narration": "string (one short sentence for the voiceover)",
+      "importance": "\"low\" | \"medium\" | \"high\" (how demo-worthy this feature is)"
     }
   ],
-  "totalDurationMs": number
+  "totalDurationMs": number,
+  "contentRect": {
+    "x": number, "y": number, "width": number, "height": number
+  }
 }`;
+
+const CONTENT_RECT_GUIDANCE = `contentRect: a normalized (0-1) rectangle of the application's own content area,
+excluding browser chrome (tab strip, URL/address bar, bookmarks bar). Do NOT exclude
+in-app navigation, the macOS menu bar, or the dock — only literal browser chrome.
+If no browser chrome is visible in the recording, return {"x":0,"y":0,"width":1,"height":1}.`;
 
 async function runAnalysisLLM(
   frames: Array<{ path: string; b64: string }>,
@@ -157,7 +145,8 @@ async function runAnalysisLLM(
 You will receive a series of JPEG frames from a recording.
 Return ONLY valid JSON matching this schema — no markdown fences, no extra text:
 ${ANALYSIS_SCHEMA}
-All time values are in milliseconds from the start of the recording.`;
+All time values are in milliseconds from the start of the recording.
+${CONTENT_RECT_GUIDANCE}`;
 
   const userParts: Anthropic.MessageParam["content"] = [
     ...imageBlocks,
@@ -182,38 +171,15 @@ Analyse the recording and return the JSON schema above.`,
   return JSON.parse(clean) as AutoZoomAnalysis;
 }
 
-// ── Zoom derivation from analysis ─────────────────────────────────────────────
-
-function analysisToZoomRegions(analysis: AutoZoomAnalysis): Array<{
-  id: string;
-  startMs: number;
-  endMs: number;
-  depth: number;
-  focus: { cx: number; cy: number };
-  mode: "auto";
-}> {
-  // Each key interaction within a feature becomes a zoom region centred at 0.5,0.4
-  // (slightly above centre — most UI actions happen in the top 2/3 of the screen).
-  // The depth scales with the number of interactions: dense = shallower zoom to
-  // show context; sparse single action = deeper zoom to highlight it.
-  const regions: ReturnType<typeof analysisToZoomRegions> = [];
-  let idx = 0;
-  for (const feature of analysis.features) {
-    const ints = feature.interactions;
-    if (!ints.length) continue;
-    const depth = ints.length <= 2 ? 3 : ints.length <= 4 ? 2 : 1;
-    for (const int of ints) {
-      regions.push({
-        id: `az-${idx++}`,
-        startMs: Math.max(0, int.timeMs - 400),
-        endMs: int.timeMs + 1800,
-        depth,
-        focus: { cx: 0.5, cy: 0.4 },
-        mode: "auto",
-      });
-    }
-  }
-  return regions;
+/** Clamp/guard the LLM's contentRect so an over-eager crop can't eat the page. */
+function normalizeContentRect(rect: AutoZoomContentRect | undefined): AutoZoomContentRect {
+  if (!rect) return IDENTITY_CROP;
+  const x = Math.min(1, Math.max(0, rect.x ?? 0));
+  const y = Math.min(1, Math.max(0, rect.y ?? 0));
+  const width = Math.min(1 - x, Math.max(0, rect.width ?? 1));
+  const height = Math.min(1 - y, Math.max(0, rect.height ?? 1));
+  if (width < 0.5 || height < 0.5) return IDENTITY_CROP;
+  return { x, y, width, height };
 }
 
 // ── Caption generation ────────────────────────────────────────────────────────
@@ -225,7 +191,7 @@ interface Caption {
   text: string;
 }
 
-function analysisToCaption(analysis: AutoZoomAnalysis): Caption[] {
+function analysisToCaptions(analysis: AutoZoomAnalysis): Caption[] {
   return analysis.features.map((f, i) => ({
     id: `cap-${i}`,
     startMs: f.startMs,
@@ -268,7 +234,8 @@ async function runRefinementLLM(
 The user has auto-generated zoom regions for a product demo video.
 You can adjust zoom regions based on user queries.
 Return ONLY JSON: { "zoomRegions": [...same schema, modified...], "message": "short explanation" }
-Zoom region schema: { id, startMs, endMs, depth (1-6), focus: {cx, cy} (0-1 normalized), mode: "auto"|"manual" }`;
+Zoom region schema: { id, startMs, endMs, depth (1-6), focus: {cx, cy} (0-1 normalized), mode: "auto"|"manual" }
+Focus coordinates are normalized to the CROPPED frame (after any auto-crop is applied), not the raw source video.`;
 
   const response = await client.messages.create({
     model: "claude-sonnet-4-6",
@@ -294,6 +261,7 @@ async function assembleProject(opts: {
   zoomRegions: unknown[];
   captions: Caption[];
   audioPath: string | null;
+  cropRegion: AutoZoomContentRect;
   analysis: AutoZoomAnalysis;
   outDir: string;
 }): Promise<string> {
@@ -301,8 +269,23 @@ async function assembleProject(opts: {
     zoomRegions: opts.zoomRegions,
     showCursor: true,
     loopCursor: false,
-    ...(opts.captions.length ? { captions: opts.captions } : {}),
-    ...(opts.audioPath ? { autoZoomAudioPath: opts.audioPath } : {}),
+    ...(opts.cropRegion !== IDENTITY_CROP ? { cropRegion: opts.cropRegion } : {}),
+    ...(opts.captions.length ? { autoCaptions: opts.captions } : {}),
+    ...(opts.audioPath
+      ? {
+          audioRegions: [
+            {
+              id: "audio-1",
+              startMs: 0,
+              endMs: opts.analysis.totalDurationMs,
+              audioPath: opts.audioPath,
+              volume: 1,
+              normalize: false,
+              trackIndex: 0,
+            },
+          ],
+        }
+      : {}),
   };
 
   // Minimal .recordly format (version matches PROJECT_VERSION = 1 in recordly-project-format)
@@ -327,42 +310,26 @@ async function assembleProject(opts: {
 // ── IPC Registration ──────────────────────────────────────────────────────────
 
 export function registerAutoZoomHandlers(): void {
-  // Open the Auto Zoom window
-  ipcMain.handle("auto-zoom:open-window", () => {
-    createAutoZoomWindow();
-  });
-
-  // Start recording — reuses native recording IPC, hides the Auto Zoom window,
-  // shows the floating pill.
-  ipcMain.handle("auto-zoom:start-record", async (_e, _opts: { sourceId?: string }) => {
-    hideAutoZoomWindow();
-    createAutoZoomPillWindow();
-    // The renderer's Auto Zoom window will call the existing
-    // startNativeScreenRecording IPC to actually start capture.
-    // This handler just manages the window state.
-    return { success: true };
-  });
-
-  // Stop recording — brings the Auto Zoom window back and returns paths.
-  ipcMain.handle("auto-zoom:stop-record", async (_e, result: { videoPath: string; cursorPath: string }) => {
-    closeAutoZoomPillWindow();
-    showAutoZoomWindow();
-    activeVideoPath = result.videoPath;
-    activeCursorPath = result.cursorPath;
+  // The armed handoff module notifies us when a HUD recording finalizes while armed.
+  setAutoZoomFinalizedCallback((videoPath, cursorPath) => {
+    activeVideoPath = videoPath;
+    activeCursorPath = cursorPath;
     activeAnalysis = null;
     activeConversation = [];
     activeFrameDir = path.join(os.tmpdir(), `recordly-auto-zoom-${Date.now()}`);
-    return { videoPath: result.videoPath, cursorPath: result.cursorPath };
   });
 
-  // Pill stop button clicked — relay to the Auto Zoom window
-  ipcMain.on("auto-zoom:pill-stop", () => {
-    const win = getAutoZoomWindow();
-    if (win && !win.isDestroyed()) {
-      win.webContents.send("auto-zoom:pill-stop");
-    }
-    closeAutoZoomPillWindow();
-    showAutoZoomWindow();
+  // Open the Auto Zoom window
+  ipcMain.handle("auto-zoom:open-window", () => {
+    createAutoZoomWindow();
+    setAutoZoomWindowClosedListener(() => setAutoZoomArmed(false));
+  });
+
+  // Step 1 arms/disarms capture handoff — while armed, the next HUD recording
+  // to finalize is handed to Auto Zoom instead of opening the editor.
+  ipcMain.handle("auto-zoom:set-armed", (_e, armed: boolean) => {
+    setAutoZoomArmed(Boolean(armed));
+    return { success: true };
   });
 
   // Analyze — extract frames + LLM vision pass
@@ -436,52 +403,68 @@ export function registerAutoZoomHandlers(): void {
     }
   });
 
-  // Generate — derive zooms, captions, audio, assemble project
-  ipcMain.handle("auto-zoom:generate", async (e, opts: { enableCaptions: boolean; enableAudio: boolean }) => {
-    const wc = e.sender;
-    if (!activeAnalysis) return { success: false, error: "No analysis available" };
+  // Generate — derive zooms, crop, captions, audio, assemble project
+  ipcMain.handle(
+    "auto-zoom:generate",
+    async (e, opts: { enableCaptions: boolean; enableAudio: boolean; enableAutoCrop: boolean }) => {
+      const wc = e.sender;
+      if (!activeAnalysis) return { success: false, error: "No analysis available" };
 
-    try {
-      const outDir = path.join(path.dirname(activeVideoPath), `auto-zoom-${Date.now()}`);
+      try {
+        const outDir = path.join(path.dirname(activeVideoPath), `auto-zoom-${Date.now()}`);
+        const cropRegion = opts.enableAutoCrop
+          ? normalizeContentRect(activeAnalysis.contentRect)
+          : IDENTITY_CROP;
 
-      send(wc, { stage: "zooms", status: "running", message: "Deriving zoom regions…" });
-      const zoomRegions = analysisToZoomRegions(activeAnalysis);
-      send(wc, { stage: "zooms", status: "done", message: `${zoomRegions.length} zoom regions` });
+        send(wc, { stage: "zooms", status: "running", message: "Deriving zoom regions…" });
+        const { regions: zoomRegions, source } = await deriveZoomRegionsFromCursor({
+          cursorPath: activeCursorPath,
+          analysis: activeAnalysis,
+          crop: cropRegion,
+          totalDurationMs: activeAnalysis.totalDurationMs,
+        });
+        send(wc, {
+          stage: "zooms",
+          status: "done",
+          message: `${zoomRegions.length} zoom regions (${source === "cursor" ? "click-derived" : "fallback"})`,
+        });
 
-      const captions: Caption[] = opts.enableCaptions ? analysisToCaption(activeAnalysis) : [];
-      if (opts.enableCaptions) {
-        send(wc, { stage: "captions", status: "done", message: `${captions.length} caption segments` });
-      }
-
-      let audioPath: string | null = null;
-      if (opts.enableAudio) {
-        try {
-          send(wc, { stage: "audio", status: "running", message: "Generating narration audio…" });
-          audioPath = await generateNarrationAudio(activeAnalysis, outDir);
-          send(wc, { stage: "audio", status: "done", message: audioPath ? "Narration ready" : "Audio skipped (non-macOS)" });
-        } catch (err) {
-          send(wc, { stage: "audio", status: "error", message: `Audio failed: ${String(err)} — continuing without` });
+        const captions: Caption[] = opts.enableCaptions ? analysisToCaptions(activeAnalysis) : [];
+        if (opts.enableCaptions) {
+          send(wc, { stage: "captions", status: "done", message: `${captions.length} caption segments` });
         }
+
+        let audioPath: string | null = null;
+        if (opts.enableAudio) {
+          try {
+            send(wc, { stage: "audio", status: "running", message: "Generating narration audio…" });
+            audioPath = await generateNarrationAudio(activeAnalysis, outDir);
+            send(wc, { stage: "audio", status: "done", message: audioPath ? "Narration ready" : "Audio skipped (non-macOS)" });
+          } catch (err) {
+            send(wc, { stage: "audio", status: "error", message: `Audio failed: ${String(err)} — continuing without` });
+          }
+        }
+
+        send(wc, { stage: "assemble", status: "running", message: "Assembling project…" });
+        const projectPath = await assembleProject({
+          videoPath: activeVideoPath,
+          zoomRegions,
+          captions,
+          audioPath,
+          cropRegion,
+          analysis: activeAnalysis,
+          outDir,
+        });
+        await rememberApprovedLocalReadPath(projectPath);
+        send(wc, { stage: "assemble", status: "done", message: "Project ready", payload: { projectPath } });
+
+        return { projectPath };
+      } catch (err) {
+        send(wc, { stage: "assemble", status: "error", message: String(err) });
+        return { success: false, error: String(err) };
       }
-
-      send(wc, { stage: "assemble", status: "running", message: "Assembling project…" });
-      const projectPath = await assembleProject({
-        videoPath: activeVideoPath,
-        zoomRegions,
-        captions,
-        audioPath,
-        analysis: activeAnalysis,
-        outDir,
-      });
-      await rememberApprovedLocalReadPath(projectPath);
-      send(wc, { stage: "assemble", status: "done", message: "Project ready", payload: { projectPath } });
-
-      return { projectPath };
-    } catch (err) {
-      send(wc, { stage: "assemble", status: "error", message: String(err) });
-      return { success: false, error: String(err) };
-    }
-  });
+    },
+  );
 
   // Refinement query from the editor panel
   ipcMain.handle("auto-zoom:refinement", async (_e, _query: string) => {
@@ -505,7 +488,7 @@ export function registerAutoZoomHandlers(): void {
   });
 
   ipcMain.handle("auto-zoom:cancel", () => {
-    closeAutoZoomPillWindow();
+    setAutoZoomArmed(false);
     showAutoZoomWindow();
   });
 }

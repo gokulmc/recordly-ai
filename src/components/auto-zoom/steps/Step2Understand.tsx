@@ -5,6 +5,7 @@ import {
   WarningCircleIcon,
   ClosedCaptioningIcon,
   SpeakerHighIcon,
+  CropIcon,
 } from "@phosphor-icons/react";
 import type { AutoZoomAnalysis, AutoZoomProgress } from "../useAutoZoomStore";
 import { MindMap } from "../MindMap";
@@ -18,6 +19,8 @@ interface Props {
   setEnableCaptions: (v: boolean) => void;
   enableAudio: boolean;
   setEnableAudio: (v: boolean) => void;
+  enableAutoCrop: boolean;
+  setEnableAutoCrop: (v: boolean) => void;
   onGenerate: () => void;
   styles: Record<string, string>;
 }
@@ -63,6 +66,8 @@ export function Step2Understand({
   setEnableCaptions,
   enableAudio,
   setEnableAudio,
+  enableAutoCrop,
+  setEnableAutoCrop,
   onGenerate,
   styles: _styles,
 }: Props) {
@@ -182,14 +187,17 @@ export function Step2Understand({
 
       {/* Footer: toggles + generate */}
       {isDone && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 4 }}>
-          <Toggle label="Captions" checked={enableCaptions} onChange={setEnableCaptions} icon={<ClosedCaptioningIcon size={14} />} />
-          <Toggle label="Narration" checked={enableAudio} onChange={setEnableAudio} icon={<SpeakerHighIcon size={14} />} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingTop: 4 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Toggle label="Auto crop" checked={enableAutoCrop} onChange={setEnableAutoCrop} icon={<CropIcon size={14} />} />
+            <Toggle label="Captions" checked={enableCaptions} onChange={setEnableCaptions} icon={<ClosedCaptioningIcon size={14} />} />
+            <Toggle label="Narration" checked={enableAudio} onChange={setEnableAudio} icon={<SpeakerHighIcon size={14} />} />
+          </div>
           <button
             type="button"
             onClick={onGenerate}
             style={{
-              marginLeft: "auto",
+              width: "100%",
               height: 42, padding: "0 20px",
               borderRadius: 10, border: "none",
               background: "var(--launch-accent)", color: "#fff",
