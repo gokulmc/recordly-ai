@@ -124,7 +124,8 @@ const ANALYSIS_SCHEMA = `{
       "startMs": number,
       "endMs": number,
       "interactions": [{ "label": "string", "timeMs": number }],
-      "narration": "string (one short sentence for the voiceover)",
+      "narration": "string (one short sentence summarising the feature)",
+      "narrationLines": [{ "text": "string (spoken clause, AT MOST 9 words)", "timeMs": number }],
       "importance": "\"low\" | \"medium\" | \"high\" (how demo-worthy this feature is)"
     }
   ],
@@ -142,6 +143,13 @@ mistakes, wrong clicks and dead ends, error states, long loading waits, wanderin
 exploration, repeated attempts, anything that does not contribute to demonstrating a feature.
 Be decisive: a good demo is tight, and viewers should never see fumbling. Segments may overlap
 feature spans. Return [] only if the whole recording is genuinely clean.`;
+
+const NARRATION_LINES_GUIDANCE = `narrationLines: 2-4 lines per feature. Each line is a short spoken-style
+clause of AT MOST 9 words, timed (timeMs) to the exact on-screen moment it describes — use the
+interaction timestamps. Distribute lines across the feature span, aiming for a line every 5-10
+seconds so the demo never goes silent for long. Lines are read aloud by TTS and shown as
+captions, so write them the way a narrator would speak: "Type your question here", "Results
+appear as a branching map". No filler like "as you can see".`;
 
 const CONTENT_RECT_GUIDANCE = `contentRect: a normalized (0-1) rectangle of the application's own content area,
 excluding browser chrome (tab strip, URL/address bar, bookmarks bar). Do NOT exclude
@@ -172,7 +180,8 @@ Return ONLY valid JSON matching this schema — no markdown fences, no extra tex
 ${ANALYSIS_SCHEMA}
 All time values are in milliseconds from the start of the recording.
 ${CONTENT_RECT_GUIDANCE}
-${GARBAGE_GUIDANCE}`;
+${GARBAGE_GUIDANCE}
+${NARRATION_LINES_GUIDANCE}`;
 
   const userParts: Anthropic.MessageParam["content"] = [
     ...imageBlocks,
@@ -215,6 +224,26 @@ function validateAnalysis(data: unknown): AutoZoomAnalysis {
     if (typeof f?.name !== "string" || !Array.isArray(f.interactions)) {
       throw new Error("Analysis response has a malformed feature entry");
     }
+    // Sanitize narrationLines: drop empties, hard-trim runaway lines to 12 words
+    // (the prompt asks for ≤9 — anything longer paginates badly as a caption),
+    // clamp timeMs into the feature span, sort by time. Fall back to the
+    // one-sentence narration at the feature start when no valid lines survive.
+    const rawLines = Array.isArray(f.narrationLines) ? f.narrationLines : [];
+    const lines = rawLines
+      .filter((l) => l && typeof l.text === "string" && l.text.trim().length > 0)
+      .map((l) => ({
+        text: l.text.trim().split(/\s+/).slice(0, 12).join(" "),
+        timeMs:
+          typeof l.timeMs === "number" && Number.isFinite(l.timeMs)
+            ? Math.min(Math.max(l.timeMs, f.startMs), f.endMs)
+            : f.startMs,
+      }))
+      .sort((a, b) => a.timeMs - b.timeMs);
+    f.narrationLines = lines.length
+      ? lines
+      : typeof f.narration === "string" && f.narration.trim()
+        ? [{ text: f.narration.trim(), timeMs: f.startMs }]
+        : [];
   }
   const garbageSegments = (Array.isArray(d.garbageSegments) ? d.garbageSegments : [])
     .filter(
@@ -275,13 +304,39 @@ interface Caption {
   text: string;
 }
 
-function analysisToCaptions(analysis: AutoZoomAnalysis): Caption[] {
-  return analysis.features.map((f, i) => ({
-    id: `cap-${i}`,
-    startMs: f.startMs,
-    endMs: f.endMs,
-    text: f.narration,
-  }));
+/** Speaking-rate estimate used when narration audio is disabled. */
+const CAPTION_WORDS_PER_SEC = 2.6;
+const CAPTION_MIN_MS = 1400;
+const CAPTION_TAIL_MS = 400;
+
+/** One short cue per narration line — cue spans match the spoken audio exactly,
+ * so captions appear and disappear with the voice instead of lingering for the
+ * whole feature (a ≤9-word cue renders as a single caption page; long cues get
+ * chopped into mid-clause pages by the caption paginator). */
+function captionsFromSegments(segments: NarrationSegment[]): Caption[] {
+  const sorted = [...segments].sort((a, b) => a.startMs - b.startMs);
+  return sorted.map((seg, i) => {
+    const next = sorted[i + 1];
+    const endMs = Math.min(seg.endMs + CAPTION_TAIL_MS, next ? next.startMs : Infinity);
+    return { id: `cap-${i}`, startMs: seg.startMs, endMs, text: seg.text };
+  });
+}
+
+/** Caption timing when narration audio is off: word-count duration estimate. */
+function captionsFromLines(analysis: AutoZoomAnalysis): Caption[] {
+  const lines = analysis.features
+    .flatMap((f) => f.narrationLines ?? [])
+    .sort((a, b) => a.timeMs - b.timeMs);
+  const captions: Caption[] = [];
+  let prevEndMs = 0;
+  for (const line of lines) {
+    const words = line.text.split(/\s+/).length;
+    const startMs = Math.max(line.timeMs, prevEndMs + 100);
+    const endMs = startMs + Math.max(CAPTION_MIN_MS, Math.round((words / CAPTION_WORDS_PER_SEC) * 1000));
+    captions.push({ id: `cap-${captions.length}`, startMs, endMs, text: line.text });
+    prevEndMs = endMs;
+  }
+  return captions;
 }
 
 // ── Cuts (trim dead time, head/tail AND between features) ─────────────────────
@@ -401,12 +456,14 @@ function regionOutsideCuts(
   return cuts.every((cut) => region.endMs <= cut.startMs || region.startMs >= cut.endMs);
 }
 
-// ── macOS TTS audio (one segment per feature) ─────────────────────────────────
+// ── macOS TTS audio (one segment per narration line) ──────────────────────────
 
 interface NarrationSegment {
   featureIndex: number;
+  /** The spoken text — reused verbatim as the matching caption cue. */
+  text: string;
   audioPath: string;
-  /** Source-time start/end of this narration region (start = feature.startMs). */
+  /** Source-time start/end of this narration region (after the overlap sweep). */
   startMs: number;
   endMs: number;
 }
@@ -427,10 +484,39 @@ async function probeAudioDurationMs(audioPath: string): Promise<number> {
   return seconds && seconds > 0 ? Math.round(seconds * 1000) : 0;
 }
 
+/** Bound the TTS work — a pathological analysis can't queue unbounded `say` calls. */
+const MAX_NARRATION_LINES = 24;
+/** Minimum breathing room between consecutive spoken lines. */
+const NARRATION_GAP_MS = 250;
+
+async function ttsLineToMp3(
+  ffmpeg: string,
+  outDir: string,
+  index: number,
+  text: string,
+): Promise<{ audioPath: string; durationMs: number }> {
+  const aiffPath = path.join(outDir, `narration-${String(index + 1).padStart(2, "0")}.aiff`);
+  const mp3Path = path.join(outDir, `narration-${String(index + 1).padStart(2, "0")}.mp3`);
+  await new Promise<void>((resolve, reject) => {
+    const proc = spawn("say", ["-o", aiffPath, text]);
+    proc.on("close", (c) => (c === 0 ? resolve() : reject(new Error(`say exited ${c}`))));
+    proc.on("error", reject);
+  });
+  await new Promise<void>((resolve, reject) => {
+    const proc = spawn(ffmpeg, ["-i", aiffPath, "-q:a", "2", mp3Path, "-y"]);
+    proc.on("close", (c) => (c === 0 ? resolve() : reject(new Error(`ffmpeg audio exited ${c}`))));
+    proc.on("error", reject);
+  });
+  await fsp.rm(aiffPath, { force: true });
+  const durationMs = await probeAudioDurationMs(mp3Path);
+  return { audioPath: mp3Path, durationMs: durationMs || 2000 };
+}
+
 /**
- * One TTS clip per feature, each placed at its feature's start. Per-feature
- * segments (instead of one long track) keep narration aligned to what's on
- * screen AND guarantee no audio region ever spans a trimmed gap.
+ * One TTS clip per narration LINE, spoken at the moment it describes. Dense,
+ * time-distributed lines (2-4 per feature) are what keep the demo from going
+ * silent for 20s stretches; short per-line segments (instead of one long
+ * track) also guarantee no audio region ever spans a trimmed gap.
  */
 async function generateNarrationSegments(
   analysis: AutoZoomAnalysis,
@@ -439,37 +525,92 @@ async function generateNarrationSegments(
   if (process.platform !== "darwin") return [];
   await fsp.mkdir(outDir, { recursive: true });
   const ffmpeg = await getFfmpegBinaryPath();
+
+  const lines = analysis.features
+    .flatMap((feature, featureIndex) =>
+      (feature.narrationLines ?? []).map((line) => ({ featureIndex, text: line.text, timeMs: line.timeMs })),
+    )
+    .sort((a, b) => a.timeMs - b.timeMs)
+    .slice(0, MAX_NARRATION_LINES);
+  if (!lines.length) return [];
+
+  // TTS with small concurrency — ~18 sequential say+ffmpeg cycles would take
+  // the better part of a minute; 3 workers keeps the generate step snappy.
+  const rendered: Array<{ audioPath: string; durationMs: number }> = new Array(lines.length);
+  let nextIndex = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(3, lines.length) }, async () => {
+      while (nextIndex < lines.length) {
+        const i = nextIndex++;
+        rendered[i] = await ttsLineToMp3(ffmpeg, outDir, i, lines[i].text);
+      }
+    }),
+  );
+
+  // Overlap sweep in time order: a line's audio may run past the next line's
+  // timestamp — push the next start out so spoken lines never overlap.
   const segments: NarrationSegment[] = [];
-
-  for (let i = 0; i < analysis.features.length; i++) {
-    const feature = analysis.features[i];
-    const text = feature.narration?.trim();
-    if (!text) continue;
-
-    const aiffPath = path.join(outDir, `narration-${String(i + 1).padStart(2, "0")}.aiff`);
-    const mp3Path = path.join(outDir, `narration-${String(i + 1).padStart(2, "0")}.mp3`);
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn("say", ["-o", aiffPath, text]);
-      proc.on("close", (c) => (c === 0 ? resolve() : reject(new Error(`say exited ${c}`))));
-      proc.on("error", reject);
-    });
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn(ffmpeg, ["-i", aiffPath, "-q:a", "2", mp3Path, "-y"]);
-      proc.on("close", (c) => (c === 0 ? resolve() : reject(new Error(`ffmpeg audio exited ${c}`))));
-      proc.on("error", reject);
-    });
-    await fsp.rm(aiffPath, { force: true });
-
-    const durationMs = await probeAudioDurationMs(mp3Path);
+  let prevEndMs = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const feature = analysis.features[line.featureIndex];
+    const startMs = Math.max(line.timeMs, prevEndMs + NARRATION_GAP_MS);
+    // A swept start far past the feature means narration piled up — drop the line.
+    if (feature && startMs > feature.endMs + 2000) continue;
+    const endMs = startMs + rendered[i].durationMs;
     segments.push({
-      featureIndex: i,
-      audioPath: mp3Path,
-      startMs: feature.startMs,
-      endMs: feature.startMs + (durationMs || 3000),
+      featureIndex: line.featureIndex,
+      text: line.text,
+      audioPath: rendered[i].audioPath,
+      startMs,
+      endMs,
     });
+    prevEndMs = endMs;
   }
 
   return segments;
+}
+
+// ── Generated ambient bed ─────────────────────────────────────────────────────
+
+/**
+ * Synthesizes a soft ambient pad with the bundled ffmpeg (lavfi) — layered
+ * detuned sines + brown noise, lowpassed, slow tremolo, ≈ -28dB RMS. No
+ * bundled asset, no licensing, works on every platform (pure ffmpeg, unlike
+ * the `say`-based narration). Returns null when synthesis fails — the demo
+ * just ships without music.
+ */
+async function generateAmbientBed(outDir: string, durationMs: number): Promise<string | null> {
+  await fsp.mkdir(outDir, { recursive: true });
+  const ffmpeg = await getFfmpegBinaryPath();
+  const mp3Path = path.join(outDir, "ambient.mp3");
+  const durationSecs = Math.max(4, Math.ceil(durationMs / 1000) + 2);
+
+  const args = [
+    "-f", "lavfi", "-i", `sine=frequency=110:duration=${durationSecs}`,
+    "-f", "lavfi", "-i", `sine=frequency=164.8:duration=${durationSecs}`,
+    "-f", "lavfi", "-i", `sine=frequency=220.5:duration=${durationSecs}`,
+    "-f", "lavfi", "-i", `anoisesrc=color=brown:duration=${durationSecs}:amplitude=0.3`,
+    "-filter_complex",
+    // Validated experimentally: this chain lands at ≈ -28dB RMS — a bed level
+    // that sits under speech; the region volume scales it further at playback.
+    "[0][1][2][3]amix=inputs=4:weights=1 0.7 0.5 0.6,lowpass=f=320,tremolo=f=0.15:d=0.3,volume=4dB,aformat=sample_rates=44100:channel_layouts=stereo",
+    "-q:a", "4",
+    mp3Path,
+    "-y",
+  ];
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn(ffmpeg, args);
+      proc.on("close", (c) => (c === 0 ? resolve() : reject(new Error(`ffmpeg ambient exited ${c}`))));
+      proc.on("error", reject);
+    });
+    return mp3Path;
+  } catch (err) {
+    console.warn("[auto-zoom] ambient bed generation failed:", err);
+    return null;
+  }
 }
 
 // ── Refinement (chat) ─────────────────────────────────────────────────────────
@@ -511,11 +652,41 @@ async function assembleProject(opts: {
   zoomRegions: unknown[];
   captions: Caption[];
   narrationSegments: NarrationSegment[];
+  /** Ambient bed spanning the kept range, or null when music is off/failed. */
+  musicRegion: { audioPath: string; startMs: number; endMs: number } | null;
   cropRegion: AutoZoomContentRect;
   keepClips: EditorClipRegion[] | null;
   analysis: AutoZoomAnalysis;
   outDir: string;
 }): Promise<string> {
+  const audioRegions = [
+    ...opts.narrationSegments.map((seg, i) => ({
+      id: `audio-${i + 1}`,
+      startMs: seg.startMs,
+      endMs: seg.endMs,
+      audioPath: seg.audioPath,
+      volume: 1,
+      normalize: false,
+      trackIndex: 0,
+    })),
+    // The music bed deliberately spans cuts (unlike narration): export plays it
+    // continuously across trims, and preview merely skips forward at each cut —
+    // both fine for structureless ambience, unlike speech which would be mangled.
+    ...(opts.musicRegion
+      ? [
+          {
+            id: "music-1",
+            startMs: opts.musicRegion.startMs,
+            endMs: opts.musicRegion.endMs,
+            audioPath: opts.musicRegion.audioPath,
+            volume: 0.5,
+            normalize: false,
+            trackIndex: 1,
+          },
+        ]
+      : []),
+  ];
+
   const editor = {
     zoomRegions: opts.zoomRegions,
     showCursor: true,
@@ -523,19 +694,7 @@ async function assembleProject(opts: {
     ...(opts.cropRegion !== IDENTITY_CROP ? { cropRegion: opts.cropRegion } : {}),
     ...(opts.keepClips?.length ? { clipRegions: opts.keepClips } : {}),
     ...(opts.captions.length ? { autoCaptions: opts.captions } : {}),
-    ...(opts.narrationSegments.length
-      ? {
-          audioRegions: opts.narrationSegments.map((seg, i) => ({
-            id: `audio-${i + 1}`,
-            startMs: seg.startMs,
-            endMs: seg.endMs,
-            audioPath: seg.audioPath,
-            volume: 1,
-            normalize: false,
-            trackIndex: 0,
-          })),
-        }
-      : {}),
+    ...(audioRegions.length ? { audioRegions } : {}),
   };
 
   // Minimal .recordly format (version matches PROJECT_VERSION = 1 in recordly-project-format)
@@ -659,10 +818,13 @@ export function registerAutoZoomHandlers(): void {
     }
   });
 
-  // Generate — derive zooms, crop, captions, audio, assemble project
+  // Generate — derive zooms, crop, captions, audio, music, assemble project
   ipcMain.handle(
     "auto-zoom:generate",
-    async (e, opts: { enableCaptions: boolean; enableAudio: boolean; enableAutoCrop: boolean }) => {
+    async (
+      e,
+      opts: { enableCaptions: boolean; enableAudio: boolean; enableAutoCrop: boolean; enableMusic?: boolean },
+    ) => {
       const wc = e.sender;
       if (!activeAnalysis) return { success: false, error: "No analysis available" };
 
@@ -686,12 +848,8 @@ export function registerAutoZoomHandlers(): void {
           message: `${zoomRegions.length} zoom regions (${source === "cursor" ? "click-derived" : "fallback"})`,
         });
 
-        const captions: Caption[] = opts.enableCaptions ? analysisToCaptions(activeAnalysis) : [];
-        if (opts.enableCaptions) {
-          send(wc, { stage: "captions", status: "done", message: `${captions.length} caption segments` });
-        }
-
-        // Narration BEFORE cuts — mid-gap trim boundaries must clear each
+        // Narration BEFORE captions and cuts — captions sync to the spoken
+        // segments' real timing, and mid-gap trim boundaries must clear each
         // feature's narration end so no audio region ever overlaps a trim.
         let narrationSegments: NarrationSegment[] = [];
         if (opts.enableAudio) {
@@ -702,7 +860,7 @@ export function registerAutoZoomHandlers(): void {
               stage: "audio",
               status: "done",
               message: narrationSegments.length
-                ? `${narrationSegments.length} narration segments`
+                ? `${narrationSegments.length} narration lines`
                 : "Audio skipped (non-macOS)",
             });
           } catch (err) {
@@ -710,12 +868,27 @@ export function registerAutoZoomHandlers(): void {
           }
         }
 
+        // Captions: one short cue per narration line, timed to the spoken audio
+        // when it exists, otherwise estimated from word count.
+        const captions: Caption[] = opts.enableCaptions
+          ? narrationSegments.length
+            ? captionsFromSegments(narrationSegments)
+            : captionsFromLines(activeAnalysis)
+          : [];
+        if (opts.enableCaptions) {
+          send(wc, { stage: "captions", status: "done", message: `${captions.length} caption cues` });
+        }
+
         send(wc, { stage: "cuts", status: "running", message: "Trimming dead time & garbage…" });
         const featureList = activeAnalysis.features;
         const sortedFeatures = [...featureList].sort((a, b) => a.startMs - b.startMs);
+        // A feature now has several narration segments — a cut boundary after the
+        // feature must clear the LAST spoken line.
         const narrationEndsMs = sortedFeatures.map((f) => {
-          const seg = narrationSegments.find((s) => featureList[s.featureIndex] === f);
-          return seg ? seg.endMs : 0;
+          const featureIndex = featureList.indexOf(f);
+          return narrationSegments
+            .filter((s) => s.featureIndex === featureIndex)
+            .reduce((max, s) => Math.max(max, s.endMs), 0);
         });
         const cutResult = deriveKeepClips({
           analysis: activeAnalysis,
@@ -739,6 +912,7 @@ export function registerAutoZoomHandlers(): void {
         // Match the editor's manual clip-delete semantics: regions overlapping a
         // removed range are dropped (a garbage portion must not be zoomed into or
         // narrated — and an audio region overlapping a trim breaks playback/export).
+        // The music bed below is the deliberate exception to this rule.
         const keptZoomRegions = cuts.length
           ? zoomRegions.filter((r) => regionOutsideCuts(r, cuts))
           : zoomRegions;
@@ -746,12 +920,31 @@ export function registerAutoZoomHandlers(): void {
           ? narrationSegments.filter((s) => regionOutsideCuts(s, cuts))
           : narrationSegments;
 
+        // Ambient bed spanning the kept range — generated after cuts so its
+        // length matches what actually survives.
+        let musicRegion: { audioPath: string; startMs: number; endMs: number } | null = null;
+        if (opts.enableMusic !== false) {
+          send(wc, { stage: "music", status: "running", message: "Generating ambient music bed…" });
+          const bedStartMs = keepClips?.[0]?.startMs ?? 0;
+          const bedEndMs = keepClips?.[keepClips.length - 1]?.endMs ?? durationMs;
+          const musicPath = await generateAmbientBed(outDir, bedEndMs - bedStartMs);
+          musicRegion = musicPath ? { audioPath: musicPath, startMs: bedStartMs, endMs: bedEndMs } : null;
+          // Soft-fail as "done": missing music is cosmetic and must not raise
+          // the renderer's error banner mid-generation.
+          send(wc, {
+            stage: "music",
+            status: "done",
+            message: musicRegion ? "Ambient bed ready" : "Music generation failed — continuing without",
+          });
+        }
+
         send(wc, { stage: "assemble", status: "running", message: "Assembling project…" });
         const projectPath = await assembleProject({
           videoPath: activeVideoPath,
           zoomRegions: keptZoomRegions,
           captions,
           narrationSegments: keptNarrationSegments,
+          musicRegion,
           cropRegion,
           keepClips,
           analysis: activeAnalysis,

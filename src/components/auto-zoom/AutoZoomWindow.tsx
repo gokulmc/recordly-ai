@@ -37,6 +37,7 @@ export function AutoZoomWindow() {
     enableCaptions, setEnableCaptions,
     enableAudio, setEnableAudio,
     enableAutoCrop, setEnableAutoCrop,
+    enableMusic, setEnableMusic,
     projectPath,
     summary,
     error,
@@ -80,7 +81,7 @@ export function AutoZoomWindow() {
 
   async function handleGenerate() {
     setStep(3);
-    await window.electronAPI?.autoZoomGenerate?.({ enableCaptions, enableAudio, enableAutoCrop });
+    await window.electronAPI?.autoZoomGenerate?.({ enableCaptions, enableAudio, enableAutoCrop, enableMusic });
   }
 
   async function handleOpenProject() {
@@ -177,6 +178,8 @@ export function AutoZoomWindow() {
                 setEnableAudio={setEnableAudio}
                 enableAutoCrop={enableAutoCrop}
                 setEnableAutoCrop={setEnableAutoCrop}
+                enableMusic={enableMusic}
+                setEnableMusic={setEnableMusic}
                 onGenerate={() => void handleGenerate()}
                 styles={styles}
               />
@@ -196,7 +199,7 @@ export function AutoZoomWindow() {
             >
               <StepHeader title={summary ? "Here's what Auto Zoom did" : "Generating your demo…"} step={3} />
               <Step3Generate
-                progresses={progresses.filter((p) => ["zooms", "captions", "audio", "cuts", "assemble", "open"].includes(p.stage))}
+                progresses={progresses.filter((p) => ["zooms", "captions", "audio", "music", "cuts", "assemble", "open"].includes(p.stage))}
                 projectPath={projectPath}
                 summary={summary}
                 error={error}

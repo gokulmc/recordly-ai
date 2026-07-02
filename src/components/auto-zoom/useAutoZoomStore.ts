@@ -2,6 +2,11 @@ import { useState, useCallback } from "react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
+export interface AutoZoomNarrationLine {
+  text: string;
+  timeMs: number;
+}
+
 export interface AutoZoomFeature {
   name: string;
   description: string;
@@ -9,6 +14,7 @@ export interface AutoZoomFeature {
   endMs: number;
   interactions: Array<{ label: string; timeMs: number }>;
   narration: string;
+  narrationLines?: AutoZoomNarrationLine[];
   importance?: "low" | "medium" | "high";
 }
 
@@ -67,6 +73,7 @@ export interface AutoZoomState {
   enableCaptions: boolean;
   enableAudio: boolean;
   enableAutoCrop: boolean;
+  enableMusic: boolean;
   projectPath: string | null;
   summary: AutoZoomSummary | null;
   error: string | null;
@@ -84,6 +91,7 @@ export function useAutoZoomStore() {
   const [enableCaptions, setEnableCaptions] = useState(true);
   const [enableAudio, setEnableAudio] = useState(true);
   const [enableAutoCrop, setEnableAutoCrop] = useState(true);
+  const [enableMusic, setEnableMusic] = useState(true);
   const [projectPath, setProjectPath] = useState<string | null>(null);
   const [summary, setSummary] = useState<AutoZoomSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -119,6 +127,7 @@ export function useAutoZoomStore() {
     setEnableCaptions(true);
     setEnableAudio(true);
     setEnableAutoCrop(true);
+    setEnableMusic(true);
     setProjectPath(null);
     setSummary(null);
     setError(null);
@@ -134,6 +143,7 @@ export function useAutoZoomStore() {
     enableCaptions, setEnableCaptions,
     enableAudio, setEnableAudio,
     enableAutoCrop, setEnableAutoCrop,
+    enableMusic, setEnableMusic,
     projectPath,
     summary,
     error, setError,

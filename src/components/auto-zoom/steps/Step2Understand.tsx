@@ -6,6 +6,7 @@ import {
   ClosedCaptioningIcon,
   SpeakerHighIcon,
   CropIcon,
+  MusicNotesIcon,
 } from "@phosphor-icons/react";
 import type { AutoZoomAnalysis, AutoZoomProgress } from "../useAutoZoomStore";
 import { MindMap } from "../MindMap";
@@ -21,6 +22,8 @@ interface Props {
   setEnableAudio: (v: boolean) => void;
   enableAutoCrop: boolean;
   setEnableAutoCrop: (v: boolean) => void;
+  enableMusic: boolean;
+  setEnableMusic: (v: boolean) => void;
   onGenerate: () => void;
   styles: Record<string, string>;
 }
@@ -73,6 +76,8 @@ export function Step2Understand({
   setEnableAudio,
   enableAutoCrop,
   setEnableAutoCrop,
+  enableMusic,
+  setEnableMusic,
   onGenerate,
   styles: _styles,
 }: Props) {
@@ -223,6 +228,7 @@ export function Step2Understand({
             <Toggle label="Auto crop" checked={enableAutoCrop} onChange={setEnableAutoCrop} icon={<CropIcon size={14} />} />
             <Toggle label="Captions" checked={enableCaptions} onChange={setEnableCaptions} icon={<ClosedCaptioningIcon size={14} />} />
             <Toggle label="Narration" checked={enableAudio} onChange={setEnableAudio} icon={<SpeakerHighIcon size={14} />} />
+            <Toggle label="Music" checked={enableMusic} onChange={setEnableMusic} icon={<MusicNotesIcon size={14} />} />
           </div>
           <button
             type="button"
