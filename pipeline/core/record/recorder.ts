@@ -36,6 +36,8 @@ import {
 	captureBeaconClock,
 } from "./syncBeacon.js";
 import {
+	ACTION_TIMEOUT_MS,
+	type StepRef,
 	traceClick,
 	traceDblClick,
 	traceFill,
@@ -43,7 +45,21 @@ import {
 	traceNavigate,
 	traceScroll,
 } from "./traceCapture.js";
+import { compileTarget, describeTarget } from "./locator.js";
 import type { DemoStep, RecorderConfig, RecordingResult, RecordingScript } from "./types.js";
+
+/** Build the recorder's step reference (target preferred, selector legacy, match for self-heal). */
+function stepRef(step: DemoStep): StepRef {
+	return { target: step.target, selector: step.selector, match: step.match };
+}
+
+/** Human-readable description of a step's target for logs. */
+function describeStep(step: DemoStep): string {
+	if (step.target) return describeTarget(step.target);
+	if (step.selector) return `"${step.selector}"`;
+	if (step.match?.name) return `match("${step.match.name}")`;
+	return "(no target)";
+}
 import { startPlaywrightVideoRecording } from "./captureBackends/playwrightVideo.js";
 import type { NativeRecordlyOpts } from "./captureBackends/nativeRecordly.js";
 
@@ -89,7 +105,17 @@ export async function record(
 	config: RecorderConfig | DualTrackConfig,
 ): Promise<RecordingResult> {
 	if ("backend" in config && config.backend === "native") {
-		return recordDualTrack(script, config as DualTrackConfig);
+		try {
+			return await recordDualTrack(script, config as DualTrackConfig);
+		} catch (err) {
+			// Native capture failed — re-run the WHOLE script under Playwright so
+			// the trace matches the (Playwright) video. Never pair a native trace
+			// with a Playwright video; their source frame + calibration differ.
+			console.warn(
+				`  [recorder] native capture failed (${String(err).split("\n")[0]}); falling back to Playwright video`,
+			);
+			return recordPlaywright(script, config);
+		}
 	}
 	return recordPlaywright(script, config);
 }
@@ -104,6 +130,10 @@ async function recordPlaywright(
 	const vh = script.viewportHeight ?? 720;
 	const settleMs = config.postActionSettleMs ?? DEFAULT_POST_SETTLE_MS;
 
+	// NOTE: we intentionally do NOT preload authStatePath here — the demo replays
+	// the captured login ON CAMERA (the user wants to see sign-in). storageState
+	// would pre-authenticate and make the login steps no-op. It's kept on the
+	// config as a future fallback only.
 	const backend = await startPlaywrightVideoRecording({
 		videoDir: config.videoDir,
 		viewportWidth: vw,
@@ -121,18 +151,24 @@ async function recordPlaywright(
 		sourceFrame: { width: vw, height: vh },
 	};
 
-	// Segment 0: inject sync beacon + fiducials for validation
-	await openPlaywrightSegment(page, trace, recordingStartMs, vw, vh);
-
-	// Navigate to the start URL
-	await traceNavigate(page, trace, script.startUrl);
-
-	// Execute each demo step
-	for (const step of script.steps) {
-		await executeStep(page, trace, step, settleMs, recordingStartMs, "playwright");
+	try {
+		// Segment 0: inject sync beacon + fiducials for validation
+		await openPlaywrightSegment(page, trace, recordingStartMs, vw, vh);
+		// Navigate to the start URL
+		await traceNavigate(page, trace, script.startUrl).catch((err) =>
+			console.warn(`  [recorder] start navigate failed: ${String(err).split("\n")[0]}`),
+		);
+		// Execute each demo step — never let one bad step abort the recording.
+		for (const step of script.steps) {
+			try {
+				await executeStep(page, trace, step, settleMs, recordingStartMs, "playwright");
+			} catch (err) {
+				console.warn(`  [recorder] step ${step.action} failed, continuing: ${String(err).split("\n")[0]}`);
+			}
+		}
+	} finally {
+		trace.totalMs = performance.now() - recordingStartMs;
 	}
-
-	trace.totalMs = performance.now() - recordingStartMs;
 	const videoPath = await backend.finalize();
 	return { videoPath, trace };
 }
@@ -146,8 +182,6 @@ async function recordDualTrack(
 	const vw = script.viewportWidth ?? 1280;
 	const vh = script.viewportHeight ?? 720;
 	const settleMs = config.postActionSettleMs ?? DEFAULT_POST_SETTLE_MS;
-	const srcW = config.sourceFrameWidth ?? vw;
-	const srcH = config.sourceFrameHeight ?? vh;
 
 	// Dynamic import to avoid importing native-backend IPC types in headless builds
 	const { createNativeRecordlyBackend } = await import(
@@ -161,20 +195,30 @@ async function recordDualTrack(
 		onMessage: config.nativeOpts.onMessage,
 	});
 
-	// Start native capture first so it records from frame-0
-	await nativeBackend.start();
-
-	// Start Playwright (headed, non-recording — native backend provides the pixels)
+	// Launch Playwright FIRST so the browser window exists and carries our unique
+	// title BEFORE native capture searches for it by title. (Native capture keys
+	// on the resolved windowId, so later navigations changing the title are fine.)
 	const { chromium } = await import("playwright");
 	const browser = await chromium.launch({ headless: false });
+	// Login is replayed on camera (see recordPlaywright note) — don't preload auth.
 	const context = await browser.newContext({
 		viewport: { width: vw, height: vh },
 		deviceScaleFactor: 1,
 	});
 	const page = await context.newPage();
 
-	// Set the unique window title so Electron can identify the source
+	// Give the window a unique, stable title for source discovery, then let the
+	// OS window manager pick it up before we ask Electron to find the source.
+	await page.goto("about:blank");
 	await page.evaluate((title) => { document.title = title; }, config.windowTitle);
+	await page.bringToFront();
+	await page.waitForTimeout(800);
+
+	// Now start native capture — the window exists and is titled. The started
+	// response carries the real captured-source pixel dimensions.
+	const started = await nativeBackend.start();
+	const srcW = config.sourceFrameWidth ?? (started.sourceWidth > 0 ? started.sourceWidth : vw);
+	const srcH = config.sourceFrameHeight ?? (started.sourceHeight > 0 ? started.sourceHeight : vh);
 
 	const recordingStartMs = performance.now();
 
@@ -189,20 +233,29 @@ async function recordDualTrack(
 	await openDualTrackSegment(page, trace, recordingStartMs, vw, vh, srcW, srcH);
 
 	// Navigate to the start URL
-	await traceNavigate(page, trace, script.startUrl);
+	await traceNavigate(page, trace, script.startUrl).catch((err) =>
+		console.warn(`  [recorder] start navigate failed: ${String(err).split("\n")[0]}`),
+	);
 
-	// Execute demo steps
+	// Execute demo steps — never let one bad step abort the recording.
 	for (const step of script.steps) {
-		await executeStep(page, trace, step, settleMs, recordingStartMs, "native", config, srcW, srcH);
+		try {
+			await executeStep(page, trace, step, settleMs, recordingStartMs, "native", config, srcW, srcH);
+		} catch (err) {
+			console.warn(`  [recorder] step ${step.action} failed, continuing: ${String(err).split("\n")[0]}`);
+		}
 	}
 
 	trace.totalMs = performance.now() - recordingStartMs;
 
-	await page.close();
-	await context.close();
-	await browser.close();
-
+	// Stop native capture BEFORE tearing down the browser. If we closed the
+	// window first, ScreenCaptureKit loses its capture target and the helper can
+	// hang/err at finalize.
 	const videoPath = await nativeBackend.finalize();
+
+	await page.close().catch(() => {});
+	await context.close().catch(() => {});
+	await browser.close().catch(() => {});
 
 	// Post-solve: now that the native video is finalized, extract frames at each
 	// segment's beacon timestamp and solve the true affine M from fiducial detections.
@@ -373,60 +426,66 @@ async function executeStep(
 			break;
 		}
 		case "click": {
-			if (!step.selector) throw new Error("click step requires a selector");
 			try {
-				await traceClick(page, trace, step.selector);
+				await traceClick(page, trace, stepRef(step));
 			} catch (err) {
-				console.warn(`  [recorder] click "${step.selector}" failed, skipping: ${String(err).split("\n")[0]}`);
+				console.warn(`  [recorder] click ${describeStep(step)} failed, skipping: ${String(err).split("\n")[0]}`);
 			}
 			break;
 		}
 		case "dblclick": {
-			if (!step.selector) throw new Error("dblclick step requires a selector");
 			try {
-				await traceDblClick(page, trace, step.selector);
+				await traceDblClick(page, trace, stepRef(step));
 			} catch (err) {
-				console.warn(`  [recorder] dblclick "${step.selector}" failed, skipping: ${String(err).split("\n")[0]}`);
+				console.warn(`  [recorder] dblclick ${describeStep(step)} failed, skipping: ${String(err).split("\n")[0]}`);
 			}
 			break;
 		}
 		case "fill": {
-			if (!step.selector) throw new Error("fill step requires a selector");
 			try {
-				await traceFill(page, trace, step.selector, step.value ?? "");
+				await traceFill(page, trace, stepRef(step), step.value ?? "");
 			} catch (err) {
-				console.warn(`  [recorder] fill "${step.selector}" failed, skipping: ${String(err).split("\n")[0]}`);
+				console.warn(`  [recorder] fill ${describeStep(step)} failed, skipping: ${String(err).split("\n")[0]}`);
 			}
 			break;
 		}
 		case "hover": {
-			if (!step.selector) throw new Error("hover step requires a selector");
 			try {
-				await traceHover(page, trace, step.selector);
+				await traceHover(page, trace, stepRef(step));
 			} catch (err) {
-				console.warn(`  [recorder] hover "${step.selector}" failed, skipping: ${String(err).split("\n")[0]}`);
+				console.warn(`  [recorder] hover ${describeStep(step)} failed, skipping: ${String(err).split("\n")[0]}`);
 			}
 			break;
 		}
 		case "scroll": {
-			await traceScroll(page, trace, step.scrollDeltaY ?? 300);
+			try {
+				await traceScroll(page, trace, step.scrollDeltaY ?? 300);
+			} catch (err) {
+				console.warn(`  [recorder] scroll failed, skipping: ${String(err).split("\n")[0]}`);
+			}
 			break;
 		}
 		case "wait": {
-			await page.waitForTimeout(step.waitMs ?? 500);
+			await page.waitForTimeout(step.waitMs ?? 500).catch(() => {});
 			break;
 		}
 		case "keypress": {
-			if (!step.key) throw new Error("keypress step requires a key");
-			await page.keyboard.press(step.key);
+			if (!step.key) break;
+			try {
+				await page.keyboard.press(step.key);
+			} catch (err) {
+				console.warn(`  [recorder] keypress "${step.key}" failed, skipping: ${String(err).split("\n")[0]}`);
+			}
 			break;
 		}
 		case "type": {
-			if (!step.selector) throw new Error("type step requires a selector");
 			try {
-				await page.type(step.selector, step.value ?? "");
+				const r = step.target
+					? compileTarget(page, step.target)
+					: step.selector ? page.locator(step.selector).first() : null;
+				if (r) await r.pressSequentially(step.value ?? "", { timeout: ACTION_TIMEOUT_MS });
 			} catch (err) {
-				console.warn(`  [recorder] type "${step.selector}" failed, skipping: ${String(err).split("\n")[0]}`);
+				console.warn(`  [recorder] type ${describeStep(step)} failed, skipping: ${String(err).split("\n")[0]}`);
 			}
 			break;
 		}

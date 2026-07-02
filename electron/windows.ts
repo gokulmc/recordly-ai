@@ -1119,6 +1119,7 @@ export function closeCountdownWindow(): void {
 // ── Auto-demo window ──────────────────────────────────────────────────────────
 
 let autoDemoWindow: BrowserWindow | null = null;
+let videoReviewWindow: BrowserWindow | null = null;
 
 export function createAutoDemoWindow(): BrowserWindow {
 	if (autoDemoWindow && !autoDemoWindow.isDestroyed()) {
@@ -1129,15 +1130,17 @@ export function createAutoDemoWindow(): BrowserWindow {
 	const win = new BrowserWindow({
 		width: 420,
 		height: 620,
-		minWidth: 360,
+		minWidth: 380,
 		minHeight: 500,
 		resizable: true,
+		center: true,
 		titleBarStyle: "hiddenInset",
-		trafficLightPosition: { x: 14, y: 14 },
-		backgroundColor: "#1a1a1a",
+		trafficLightPosition: { x: 14, y: 16 },
+		backgroundColor: "#ffffff",
 		title: "Auto Demo",
+		alwaysOnTop: true,
 		webPreferences: {
-			preload: path.join(electronWindowsDir, "preload.js"),
+			preload: path.join(electronWindowsDir, "preload.mjs"),
 			contextIsolation: true,
 			nodeIntegration: false,
 		},
@@ -1162,4 +1165,128 @@ export function createAutoDemoWindow(): BrowserWindow {
 
 export function getAutoDemoWindow(): BrowserWindow | null {
 	return autoDemoWindow;
+}
+
+export function openVideoReviewWindow(videoPath: string): BrowserWindow {
+	if (videoReviewWindow && !videoReviewWindow.isDestroyed()) {
+		videoReviewWindow.close();
+	}
+
+	const { screen } = app.isReady()
+		? require("electron") as typeof import("electron")
+		: { screen: null };
+	const display = screen?.getPrimaryDisplay();
+	const { width: sw, height: sh } = display?.workAreaSize ?? { width: 1440, height: 900 };
+	const w = Math.round(sw * 0.75);
+	const h = Math.round(sh * 0.75);
+
+	const win = new BrowserWindow({
+		width: w,
+		height: h,
+		x: Math.round(sw * 0.125),
+		y: Math.round(sh * 0.125),
+		frame: false,
+		transparent: true,
+		alwaysOnTop: true,
+		backgroundColor: "#00000000",
+		title: "Video Review",
+		webPreferences: {
+			preload: path.join(electronWindowsDir, "preload.mjs"),
+			contextIsolation: true,
+			nodeIntegration: false,
+		},
+	});
+
+	videoReviewWindow = win;
+
+	win.on("closed", () => {
+		if (videoReviewWindow === win) videoReviewWindow = null;
+	});
+
+	const encodedPath = encodeURIComponent(videoPath);
+	if (VITE_DEV_SERVER_URL) {
+		void win.loadURL(`${VITE_DEV_SERVER_URL}?windowType=video-review&videoPath=${encodedPath}`);
+	} else {
+		void win.loadFile(path.join(RENDERER_DIST, "index.html"), {
+			query: { windowType: "video-review", videoPath },
+		});
+	}
+
+	return win;
+}
+
+export function closeVideoReviewWindow(): void {
+	if (videoReviewWindow && !videoReviewWindow.isDestroyed()) {
+		videoReviewWindow.close();
+	}
+}
+
+// ── Auto Zoom ───────────────────────────────────────────────────────────────────
+
+let autoZoomWindow: BrowserWindow | null = null;
+let autoZoomWindowClosedListener: (() => void) | null = null;
+
+/** Register a callback fired when the Auto Zoom window closes (used to disarm capture). */
+export function setAutoZoomWindowClosedListener(listener: (() => void) | null): void {
+	autoZoomWindowClosedListener = listener;
+}
+
+export function createAutoZoomWindow(): BrowserWindow {
+	if (autoZoomWindow && !autoZoomWindow.isDestroyed()) {
+		autoZoomWindow.focus();
+		return autoZoomWindow;
+	}
+
+	const win = new BrowserWindow({
+		width: 420,
+		height: 580,
+		minWidth: 380,
+		minHeight: 480,
+		resizable: true,
+		center: true,
+		titleBarStyle: "hiddenInset",
+		trafficLightPosition: { x: 14, y: 16 },
+		backgroundColor: "#ffffff",
+		title: "Auto Zoom",
+		alwaysOnTop: true,
+		webPreferences: {
+			preload: path.join(electronWindowsDir, "preload.mjs"),
+			contextIsolation: true,
+			nodeIntegration: false,
+		},
+	});
+
+	autoZoomWindow = win;
+
+	win.on("closed", () => {
+		if (autoZoomWindow === win) autoZoomWindow = null;
+		autoZoomWindowClosedListener?.();
+	});
+
+	if (VITE_DEV_SERVER_URL) {
+		win.loadURL(VITE_DEV_SERVER_URL + "?windowType=auto-zoom");
+	} else {
+		win.loadFile(path.join(RENDERER_DIST, "index.html"), {
+			query: { windowType: "auto-zoom" },
+		});
+	}
+
+	return win;
+}
+
+export function getAutoZoomWindow(): BrowserWindow | null {
+	return autoZoomWindow;
+}
+
+export function hideAutoZoomWindow(): void {
+	if (autoZoomWindow && !autoZoomWindow.isDestroyed()) {
+		autoZoomWindow.hide();
+	}
+}
+
+export function showAutoZoomWindow(): void {
+	if (autoZoomWindow && !autoZoomWindow.isDestroyed()) {
+		autoZoomWindow.show();
+		autoZoomWindow.focus();
+	}
 }

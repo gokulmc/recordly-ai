@@ -941,6 +941,19 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		};
 		return result?.success === true;
 	},
+	// OS-keychain-encrypted secret store (e.g. demo passwords).
+	secureStoreSet: (key: string, value: string) => {
+		const result = ipcRenderer.sendSync("secure-store:set", key, value) as { success?: boolean };
+		return result?.success === true;
+	},
+	secureStoreGet: (key: string) => {
+		const result = ipcRenderer.sendSync("secure-store:get", key) as { success?: boolean; value?: string | null };
+		return result?.success ? (result.value ?? null) : null;
+	},
+	secureStoreDelete: (key: string) => {
+		const result = ipcRenderer.sendSync("secure-store:delete", key) as { success?: boolean };
+		return result?.success === true;
+	},
 	setHasUnsavedChanges: (hasChanges: boolean) => {
 		ipcRenderer.send("set-has-unsaved-changes", hasChanges);
 	},
@@ -1013,6 +1026,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		ipcRenderer.invoke("extensions:review-update", reviewId, status, notes),
 
 	// ── Auto Demo ────────────────────────────────────────────────────────
+	openAutoDemoWindow: () => ipcRenderer.invoke("auto-demo:open-window"),
 	autoDemoStart: (opts: {
 		repoUrl: string;
 		productionUrl: string;
@@ -1033,5 +1047,77 @@ contextBridge.exposeInMainWorld("electronAPI", {
 			callback(evt as Parameters<typeof callback>[0]);
 		ipcRenderer.on("auto-demo:progress", listener);
 		return () => ipcRenderer.removeListener("auto-demo:progress", listener);
+	},
+
+	// ── Auto Demo — Granular Handlers ─────────────────────────────────
+	autoDemoCheckRepo: (url: string) =>
+		ipcRenderer.invoke("auto-demo:check-repo", url) as Promise<{ accessible: boolean; needsPat: boolean }>,
+	autoDemoGenerateScript: (opts: {
+		repoUrl: string;
+		productionUrl: string;
+		authEmail?: string;
+		authPassword?: string;
+		githubToken?: string;
+		focusArea?: string;
+	}) => ipcRenderer.invoke("auto-demo:generate-script", opts) as Promise<{ success: boolean }>,
+	autoDemoRecord: (opts: { scriptJson: string; outDir?: string; authStatePath?: string }) =>
+		ipcRenderer.invoke("auto-demo:record", opts) as Promise<{ success: boolean }>,
+	autoDemoRender: (opts: {
+		videoPath: string;
+		traceJsonPath: string;
+		productionUrl?: string;
+		outDir?: string;
+		zoomAggressiveness?: number;
+	}) => ipcRenderer.invoke("auto-demo:render", opts) as Promise<{ success: boolean }>,
+	onAutoDemoPhaseResult: (callback: (result: unknown) => void) => {
+		const listener = (_event: Electron.IpcRendererEvent, result: unknown) => callback(result);
+		ipcRenderer.on("auto-demo:phase-result", listener);
+		return () => ipcRenderer.removeListener("auto-demo:phase-result", listener);
+	},
+
+	// ── Video Review Window ────────────────────────────────────────────
+	openVideoReview: (videoPath: string) =>
+		ipcRenderer.invoke("video-review:open", videoPath),
+	closeVideoReview: () =>
+		ipcRenderer.invoke("video-review:close"),
+	onVideoReviewDecision: (callback: (decision: "approve" | "modify", zoomAggressiveness?: number) => void) => {
+		const listener = (_event: Electron.IpcRendererEvent, decision: "approve" | "modify", zoomAggressiveness?: number) => callback(decision, zoomAggressiveness);
+		ipcRenderer.on("video-review:decision", listener);
+		return () => ipcRenderer.removeListener("video-review:decision", listener);
+	},
+	sendVideoReviewDecision: (decision: "approve" | "modify", zoomAggressiveness?: number) => {
+		ipcRenderer.send("video-review:user-decision", decision, zoomAggressiveness);
+	},
+
+	// ── Auto Zoom ────────────────────────────────────────────────────────
+	openAutoZoomWindow: () => ipcRenderer.invoke("auto-zoom:open-window"),
+	autoZoomSetArmed: (armed: boolean) =>
+		ipcRenderer.invoke("auto-zoom:set-armed", armed) as Promise<{ success: boolean }>,
+	autoZoomAnalyze: (opts: { videoPath: string; cursorPath: string }) =>
+		ipcRenderer.invoke("auto-zoom:analyze", opts) as Promise<{ success: boolean }>,
+	autoZoomRefineAnalysis: (feedback: string) =>
+		ipcRenderer.invoke("auto-zoom:refine-analysis", feedback) as Promise<{ success: boolean }>,
+	autoZoomGenerate: (opts: { enableCaptions: boolean; enableAudio: boolean; enableAutoCrop: boolean }) =>
+		ipcRenderer.invoke("auto-zoom:generate", opts) as Promise<{ projectPath: string }>,
+	autoZoomRefinement: (query: string) =>
+		ipcRenderer.invoke("auto-zoom:refinement", query) as Promise<{ success: boolean }>,
+	autoZoomCancel: () => ipcRenderer.invoke("auto-zoom:cancel"),
+	autoZoomRefineRegions: (opts: { query: string; zoomRegions: unknown[] }) =>
+		ipcRenderer.invoke("auto-zoom:refine-regions", opts) as Promise<{ success: boolean; zoomRegions?: unknown[]; message?: string; error?: string }>,
+	onAutoZoomProgress: (
+		callback: (evt: { stage: string; status: "running" | "done" | "error"; message: string; payload?: unknown }) => void,
+	) => {
+		const listener = (_event: Electron.IpcRendererEvent, evt: unknown) =>
+			callback(evt as Parameters<typeof callback>[0]);
+		ipcRenderer.on("auto-zoom:progress", listener);
+		return () => ipcRenderer.removeListener("auto-zoom:progress", listener);
+	},
+	onAutoZoomRecordingFinalized: (
+		callback: (result: { videoPath: string; cursorPath: string }) => void,
+	) => {
+		const listener = (_event: Electron.IpcRendererEvent, result: unknown) =>
+			callback(result as Parameters<typeof callback>[0]);
+		ipcRenderer.on("auto-zoom:recording-finalized", listener);
+		return () => ipcRenderer.removeListener("auto-zoom:recording-finalized", listener);
 	},
 });

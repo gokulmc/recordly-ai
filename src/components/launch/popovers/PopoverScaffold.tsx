@@ -67,12 +67,14 @@ export function HudPopover({
 	trigger,
 	children,
 	align = "center",
+	width,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	trigger: ReactElement;
 	children: ReactNode;
 	align?: "start" | "center" | "end";
+	width?: number;
 }) {
 	const { onMouseEnter } = useHudInteraction();
 	return (
@@ -89,6 +91,7 @@ export function HudPopover({
 				collisionPadding={10}
 				usePortal={false}
 				onMouseEnter={onMouseEnter}
+				style={width ? { width } : undefined}
 			>
 				{children}
 			</PopoverContent>

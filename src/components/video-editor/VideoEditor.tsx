@@ -218,6 +218,8 @@ import {
 	type ZoomTransitionEasing,
 } from "./types";
 import VideoPlayback, { VideoPlaybackRef } from "./VideoPlayback";
+import { AutoZoomPanel } from "./AutoZoomPanel";
+import type { AutoZoomAnalysis } from "@/components/auto-zoom/useAutoZoomStore";
 import {
 	buildLoopedCursorTelemetry,
 	getDisplayedTimelineWindowMs,
@@ -522,6 +524,7 @@ export default function VideoEditor() {
 	);
 	const [resolvedWebcamVideoUrl, setResolvedWebcamVideoUrl] = useState<string | null>(null);
 	const [zoomRegions, setZoomRegions] = useState<ZoomRegion[]>([]);
+	const [autoZoomAnalysis, setAutoZoomAnalysis] = useState<AutoZoomAnalysis | null>(null);
 	const [cursorTelemetry, setCursorTelemetry] = useState<CursorTelemetryPoint[]>([]);
 	// Tracks the videoSourcePath for which the cursor telemetry IPC has already
 	// resolved. The smoke-export auto-trigger waits on this so long recordings
@@ -2130,6 +2133,18 @@ export default function VideoEditor() {
 					0,
 				) + 1;
 
+			// Detect auto-zoom projects and surface the refinement panel. Guard the
+			// shape here — a malformed LLM analysis must never reach the panel and
+			// crash the render (no error boundary wraps the editor tree).
+			const rawProject = project as unknown as Record<string, unknown>;
+			const rawAutoZoom = rawProject.autoZoom as Record<string, unknown> | undefined;
+			const rawAnalysis = rawAutoZoom?.analysis as Partial<AutoZoomAnalysis> | undefined;
+			const validAutoZoomBlock =
+				rawAnalysis && typeof rawAnalysis.appName === "string" && Array.isArray(rawAnalysis.features)
+					? rawAutoZoom
+					: undefined;
+			setAutoZoomAnalysis(validAutoZoomBlock ? (rawAnalysis as AutoZoomAnalysis) : null);
+
 			resetEditorHistoryStack(editorHistoryRef.current);
 			applyingHistoryRef.current = false;
 			syncHistoryButtons();
@@ -2140,6 +2155,7 @@ export default function VideoEditor() {
 						sourcePath,
 						buildPersistedEditorState(normalizedEditor),
 						project.projectId ?? null,
+						{ autoZoom: validAutoZoomBlock },
 					),
 				),
 			);
@@ -2154,6 +2170,13 @@ export default function VideoEditor() {
 		],
 	);
 
+	// Round-tripped on every save so the Auto Zoom refinement panel survives
+	// beyond the first editor open, not just the initial auto-open from Generate.
+	const autoZoomExtras = useMemo(
+		() => (autoZoomAnalysis ? { autoZoom: { source: "auto-zoom", analysis: autoZoomAnalysis } } : undefined),
+		[autoZoomAnalysis],
+	);
+
 	const currentProjectSnapshot = useMemo(() => {
 		if (!currentSourcePath) {
 			return null;
@@ -2162,8 +2185,9 @@ export default function VideoEditor() {
 			currentSourcePath,
 			currentPersistedEditorState,
 			lastSavedSnapshot?.projectId ?? null,
+			autoZoomExtras,
 		);
-	}, [currentPersistedEditorState, currentSourcePath, lastSavedSnapshot?.projectId]);
+	}, [currentPersistedEditorState, currentSourcePath, lastSavedSnapshot?.projectId, autoZoomExtras]);
 
 	const resolveProjectSaveDialog = useCallback((saved: boolean) => {
 		const pendingDialog = pendingProjectSaveDialogRef.current;
@@ -2903,6 +2927,7 @@ export default function VideoEditor() {
 									currentSourcePath,
 									currentPersistedEditorState,
 									lastSavedSnapshot?.projectId ?? null,
+									autoZoomExtras,
 								);
 
 					const fileNameBase =
@@ -2965,6 +2990,7 @@ export default function VideoEditor() {
 								projectData.videoPath,
 								projectData.editor,
 								result.projectId ?? projectData.projectId ?? null,
+								{ autoZoom: projectData.autoZoom },
 							),
 						),
 					);
@@ -2984,6 +3010,7 @@ export default function VideoEditor() {
 			});
 		},
 		[
+			autoZoomExtras,
 			captureProjectThumbnail,
 			clearPendingProjectAutosave,
 			currentSourcePath,
@@ -3067,6 +3094,7 @@ export default function VideoEditor() {
 								currentSourcePath,
 								currentPersistedEditorState,
 								lastSavedSnapshot?.projectId ?? null,
+								autoZoomExtras,
 							);
 				const thumbnailDataUrl = await captureProjectThumbnail();
 				const result = await window.electronAPI.saveProjectFileNamed(
@@ -3095,6 +3123,7 @@ export default function VideoEditor() {
 							projectData.videoPath,
 							projectData.editor,
 							result.projectId ?? projectData.projectId ?? null,
+							{ autoZoom: projectData.autoZoom },
 						),
 					),
 				);
@@ -3106,6 +3135,7 @@ export default function VideoEditor() {
 			}
 		},
 		[
+			autoZoomExtras,
 			captureProjectThumbnail,
 			currentPersistedEditorState,
 			currentProjectSnapshot,
@@ -5604,8 +5634,15 @@ export default function VideoEditor() {
 
 	if (loading) {
 		return (
-			<div className="flex h-screen items-center justify-center bg-background">
-				<div className="text-foreground">Loading video...</div>
+			<div
+				className="flex h-screen flex-col items-center justify-center gap-4"
+				style={{ background: "#0f0f10" }}
+			>
+				<div
+					className="h-8 w-8 animate-spin rounded-full border-2 border-white/15"
+					style={{ borderTopColor: "rgba(255,255,255,0.85)" }}
+				/>
+				<div className="text-sm text-white/60">Preparing your project…</div>
 				{projectBrowser}
 				{projectSaveDialog}
 				{unsavedChangesDialog}
@@ -6654,6 +6691,13 @@ export default function VideoEditor() {
 						</div>
 					</div>
 				</div>
+				{autoZoomAnalysis && (
+					<AutoZoomPanel
+						analysis={autoZoomAnalysis}
+						zoomRegions={zoomRegions}
+						onZoomRegionsUpdate={(regions) => setZoomRegions(regions as ZoomRegion[])}
+					/>
+				)}
 				<div
 					className="flex-shrink-0 flex flex-col"
 					style={{

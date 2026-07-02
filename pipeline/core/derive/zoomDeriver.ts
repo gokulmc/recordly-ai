@@ -84,6 +84,31 @@ export const defaultSaliency: SaliencyResolver = (event) => ({
 	emphasize: EXPLICIT_CLICK_ACTIONS.has(event.action),
 });
 
+/** Saliency that emphasizes any event whose action is in `actions`. */
+export function actionSaliency(actions: Set<InteractionEvent["action"]>): SaliencyResolver {
+	return (event) => ({ emphasize: actions.has(event.action) });
+}
+
+/**
+ * Map a "zoom density" level (1 = subtle … 5 = aggressive) to deriver options:
+ * a tighter merge gap (more, less-merged regions) and a wider set of actions
+ * that earn a zoom (clicks only → clicks + fill + type + hover).
+ */
+export function zoomOptionsForAggressiveness(level: number): {
+	config: Partial<ZoomDeriverConfig>;
+	emphasizeActions: Set<InteractionEvent["action"]>;
+} {
+	const lvl = clamp(Math.round(level), 1, 5);
+	const mergeGapMs = Math.round(2500 - (lvl - 1) * 425); // 1→2500ms … 5→800ms
+	const actions = new Set<InteractionEvent["action"]>(["click", "dblclick", "rightclick"]);
+	if (lvl >= 3) actions.add("fill");
+	if (lvl >= 4) {
+		actions.add("type");
+		actions.add("hover");
+	}
+	return { config: { mergeGapMs }, emphasizeActions: actions };
+}
+
 const DEPTHS: ZoomDepth[] = [1, 2, 3, 4, 5, 6];
 
 /** Pick the depth whose scale best matches `needScale`, capped so context never exceeds safeMargin. */

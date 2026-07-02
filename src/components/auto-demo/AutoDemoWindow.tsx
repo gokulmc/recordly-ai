@@ -1,276 +1,257 @@
-import { useState, useEffect, useRef } from "react";
-import {
-  CheckCircleIcon,
-  CircleNotchIcon,
-  WarningCircleIcon,
-  RocketLaunchIcon,
-  XCircleIcon,
-  FolderOpenIcon,
-} from "@phosphor-icons/react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
+import { useAutoDemoStore, initialStages } from "./useAutoDemoStore";
+import { Step1Inputs } from "./steps/Step1Inputs";
+import { Step2Script } from "./steps/Step2Script";
+import { Step3Progress } from "./steps/Step3Progress";
+import styles from "@/components/launch/LaunchWindow.module.css";
+import "@/components/launch/launchTheme.css";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-type StageId = "ingest" | "crawl" | "script" | "record" | "derive" | "assemble" | "done" | "error";
-type StageStatus = "pending" | "running" | "done" | "error";
-
-interface StageState {
-  id: StageId;
-  label: string;
-  status: StageStatus;
-  message: string;
+// Inject keyframe animations into document once
+const KEYFRAMES = `
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+`;
+if (typeof document !== "undefined" && !document.getElementById("__auto-demo-kf")) {
+  const s = document.createElement("style");
+  s.id = "__auto-demo-kf";
+  s.textContent = KEYFRAMES;
+  document.head.appendChild(s);
 }
 
-const STAGE_ORDER: Array<{ id: StageId; label: string }> = [
-  { id: "ingest", label: "Read repo" },
-  { id: "crawl", label: "Crawl live app" },
-  { id: "script", label: "Generate script" },
-  { id: "record", label: "Record demo" },
-  { id: "derive", label: "Derive zoom & cursor" },
-  { id: "assemble", label: "Build project" },
-  { id: "done", label: "Complete" },
-];
-
-// ── Sub-components ────────────────────────────────────────────────────────────
-
-function StageIcon({ status }: { status: StageStatus }) {
-  if (status === "running") {
-    return <CircleNotchIcon className="w-4 h-4 text-blue-400 animate-spin shrink-0" />;
-  }
-  if (status === "done") {
-    return <CheckCircleIcon className="w-4 h-4 text-green-400 shrink-0" />;
-  }
-  if (status === "error") {
-    return <WarningCircleIcon className="w-4 h-4 text-red-400 shrink-0" />;
-  }
-  return <div className="w-4 h-4 rounded-full border border-white/20 shrink-0" />;
-}
-
-function StageRow({ stage }: { stage: StageState }) {
-  return (
-    <div className="flex items-start gap-3 py-2">
-      <StageIcon status={stage.status} />
-      <div className="min-w-0">
-        <p
-          className={`text-sm font-medium leading-none ${
-            stage.status === "pending"
-              ? "text-white/30"
-              : stage.status === "error"
-                ? "text-red-300"
-                : "text-white/90"
-          }`}
-        >
-          {stage.label}
-        </p>
-        {stage.message && stage.status !== "pending" && (
-          <p className="text-xs text-white/40 mt-0.5 leading-relaxed">{stage.message}</p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── Main component ────────────────────────────────────────────────────────────
+const SLIDE_VARIANTS = {
+  enter: (dir: number) => ({ x: dir > 0 ? 30 : -30, opacity: 0 }),
+  center: { x: 0, opacity: 1 },
+  exit: (dir: number) => ({ x: dir > 0 ? -30 : 30, opacity: 0 }),
+};
 
 export function AutoDemoWindow() {
-  const [repoUrl, setRepoUrl] = useState("");
-  const [productionUrl, setProductionUrl] = useState("");
-  const [authEmail, setAuthEmail] = useState("");
-  const [authPassword, setAuthPassword] = useState("");
-  const [showAuth, setShowAuth] = useState(false);
+  const store = useAutoDemoStore();
+  const [autoExpandAuth, setAutoExpandAuth] = useState(false);
+  const {
+    step, setStep,
+    formValues, updateFormField,
+    repoStatus, setRepoStatus,
+    githubPat, setGithubPat,
+    featureMap, script,
+    stages, setStages, errorMessage, setErrorMessage, projectPath,
+    isGenerating, setIsGenerating,
+    isRecording, setIsRecording,
+    isRendering, setIsRendering,
+    savedConfigs, loadConfig, deleteConfig, saveConfig,
+    reset,
+    rawVideoPath, traceJsonPath,
+    logLines, setLogLines,
+  } = store;
 
-  const [running, setRunning] = useState(false);
-  const [stages, setStages] = useState<StageState[]>(
-    STAGE_ORDER.map((s) => ({ ...s, status: "pending", message: "" })),
-  );
-  const [projectPath, setProjectPath] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  const cleanupRef = useRef<(() => void) | null>(null);
-
-  // Wire up the progress listener once
-  useEffect(() => {
-    if (!window.electronAPI?.onAutoDemoProgress) return;
-    const remove = window.electronAPI.onAutoDemoProgress((evt) => {
-      if (evt.type !== "stage") return;
-
-      const safeStatus = (["pending", "running", "done", "error"] as const).includes(
-        evt.status as StageStatus,
-      )
-        ? (evt.status as StageStatus)
-        : "error";
-      setStages((prev) =>
-        prev.map((s) =>
-          s.id === evt.stageId ? { ...s, status: safeStatus, message: evt.message } : s,
-        ),
-      );
-
-      if (evt.stageId === "done" && evt.status === "done") {
-        setRunning(false);
-        const path = (evt.payload as { kind: "done"; projectPath: string } | undefined)
-          ?.projectPath;
-        if (path) setProjectPath(path);
-      }
-
-      if (evt.stageId === "error" || evt.status === "error") {
-        setRunning(false);
-        setErrorMessage(evt.message);
-      }
-    });
-    cleanupRef.current = remove;
-    return () => remove();
-  }, []);
+  // ── Step 1: generate script ───────────────────────────────────────────────
 
   const handleGenerate = async () => {
-    if (!repoUrl.trim() || !productionUrl.trim()) return;
-    setRunning(true);
     setErrorMessage(null);
-    setProjectPath(null);
-    setStages(STAGE_ORDER.map((s) => ({ ...s, status: "pending", message: "" })));
-
+    setLogLines([]);
+    setStages(initialStages());
+    setIsGenerating(true);
+    saveConfig(formValues);
     try {
-      await window.electronAPI?.autoDemoStart?.({
-        repoUrl: repoUrl.trim(),
-        productionUrl: productionUrl.trim(),
-        authEmail: authEmail.trim() || undefined,
-        authPassword: authPassword || undefined,
+      await window.electronAPI?.autoDemoGenerateScript?.({
+        repoUrl: formValues.repoUrl.trim(),
+        productionUrl: formValues.productionUrl.trim(),
+        authEmail: formValues.authEmail.trim() || undefined,
+        authPassword: formValues.authPassword || undefined,
+        githubToken: githubPat.trim() || undefined,
+        focusArea: formValues.query.trim() || undefined,
       });
     } catch (err) {
-      setRunning(false);
-      setErrorMessage(String(err));
+      setIsGenerating(false);
+      console.error("[AutoDemoWindow] generate-script failed:", err);
+    }
+  };
+
+  // ── Step 2: approve & record ──────────────────────────────────────────────
+
+  const handleApproveAndRecord = async () => {
+    if (!script) return;
+    setIsRecording(true);
+    setStep(3);
+    try {
+      await window.electronAPI?.autoDemoRecord?.({
+        scriptJson: JSON.stringify(script),
+        authStatePath: featureMap?.authStatePath,
+      });
+    } catch (err) {
+      setIsRecording(false);
+      console.error("[AutoDemoWindow] record failed:", err);
+    }
+  };
+
+  // ── Open video review window when rawVideoPath arrives ────────────────────
+
+  const lastReviewedPath = useRef("");
+  useEffect(() => {
+    if (rawVideoPath && rawVideoPath !== lastReviewedPath.current) {
+      lastReviewedPath.current = rawVideoPath;
+      void window.electronAPI?.openVideoReview?.(rawVideoPath);
+    }
+  }, [rawVideoPath]);
+
+  // ── Trigger render phase when user approves the video ─────────────────────
+
+  const hasStartedRender = useRef(false);
+  useEffect(() => {
+    if (isRendering && rawVideoPath && traceJsonPath && !hasStartedRender.current) {
+      hasStartedRender.current = true;
+      void window.electronAPI?.autoDemoRender?.({
+        videoPath: rawVideoPath,
+        traceJsonPath,
+        productionUrl: formValues.productionUrl.trim() || undefined,
+        zoomAggressiveness: store.zoomAggressiveness,
+      }).catch((err: unknown) => {
+        console.error("[AutoDemoWindow] render failed:", err);
+        setIsRendering(false);
+      });
+    }
+    if (!isRendering) hasStartedRender.current = false;
+  }, [isRendering, rawVideoPath, traceJsonPath]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Step 2: regenerate ────────────────────────────────────────────────────
+
+  const handleRegenerate = async (refinement: string) => {
+    setIsGenerating(true);
+    try {
+      await window.electronAPI?.autoDemoGenerateScript?.({
+        repoUrl: formValues.repoUrl.trim(),
+        productionUrl: formValues.productionUrl.trim(),
+        authEmail: formValues.authEmail.trim() || undefined,
+        authPassword: formValues.authPassword || undefined,
+        githubToken: githubPat.trim() || undefined,
+        focusArea: `${formValues.query.trim()} ${refinement}`.trim() || undefined,
+      });
+    } catch (err) {
+      setIsGenerating(false);
+      console.error("[AutoDemoWindow] regenerate failed:", err);
     }
   };
 
   const handleCancel = async () => {
     await window.electronAPI?.autoDemoCancel?.();
-    setRunning(false);
-    cleanupRef.current?.();
+    reset();
   };
 
-  const handleOpenProject = () => {
-    if (projectPath) {
-      window.electronAPI?.openProjectFileAtPath?.(projectPath);
+  const handleOpenProject = async () => {
+    if (!projectPath) return;
+    const result = await window.electronAPI?.openProjectFileAtPath?.(projectPath);
+    if (result?.success) {
+      await window.electronAPI?.switchToEditor?.();
+    } else {
+      console.error("[AutoDemoWindow] open project failed:", result?.message);
     }
   };
 
-  const isReady = repoUrl.trim() && productionUrl.trim();
-  const isDone = stages.some((s) => s.id === "done" && s.status === "done");
+  const isRunning = isGenerating || isRecording || isRendering;
+  const slideDir = step >= 2 ? 1 : -1;
 
   return (
-    <div className="flex flex-col h-screen bg-[#1a1a1a] text-white select-none">
-      {/* Drag region */}
-      <div className="h-8 w-full [-webkit-app-region:drag] shrink-0" />
+    <div
+      className="launch-theme"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100vh",
+        background: "var(--launch-surface)",
+        fontFamily: "Roboto, SF Pro Display, Helvetica, sans-serif",
+        fontSize: 14,
+        color: "var(--launch-text)",
+        userSelect: "none",
+        overflow: "hidden",
+      }}
+    >
+      {/* macOS traffic-light drag region */}
+      <div style={{ height: 44, WebkitAppRegion: "drag", flexShrink: 0 } as React.CSSProperties} />
 
-      <div className="flex-1 overflow-y-auto px-6 pb-6 flex flex-col gap-5">
-        {/* Header */}
-        <div className="flex items-center gap-2">
-          <RocketLaunchIcon className="w-5 h-5 text-blue-400" />
-          <h1 className="text-base font-semibold text-white/90">Auto Demo</h1>
-        </div>
-
-        {/* Inputs */}
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-1.5">
-            <Label className="text-xs text-white/50">GitHub repo URL or local path</Label>
-            <Input
-              value={repoUrl}
-              onChange={(e) => setRepoUrl(e.target.value)}
-              placeholder="https://github.com/org/app  or  /path/to/app"
-              disabled={running}
-              className="bg-white/5 border-white/10 text-sm h-8"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label className="text-xs text-white/50">Production URL</Label>
-            <Input
-              value={productionUrl}
-              onChange={(e) => setProductionUrl(e.target.value)}
-              placeholder="https://myapp.com"
-              disabled={running}
-              className="bg-white/5 border-white/10 text-sm h-8"
-            />
-          </div>
-
-          {/* Auth — collapsed by default */}
-          <button
-            type="button"
-            onClick={() => setShowAuth((v) => !v)}
-            disabled={running}
-            className="text-xs text-white/30 hover:text-white/50 text-left transition-colors"
-          >
-            {showAuth ? "▾ Demo user credentials" : "▸ Demo user credentials (optional)"}
-          </button>
-
-          {showAuth && (
-            <div className="flex flex-col gap-2 pl-3 border-l border-white/10">
-              <Input
-                value={authEmail}
-                onChange={(e) => setAuthEmail(e.target.value)}
-                placeholder="demo@example.com"
-                disabled={running}
-                className="bg-white/5 border-white/10 text-sm h-8"
+      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        <AnimatePresence mode="wait" custom={slideDir}>
+          {step === 1 && (
+            <motion.div
+              key="step1"
+              custom={-1}
+              variants={SLIDE_VARIANTS}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ duration: 0.18, ease: "easeOut" }}
+              style={{ flex: 1, overflowY: "auto" }}
+            >
+              <Step1Inputs
+                formValues={formValues}
+                updateFormField={updateFormField}
+                repoStatus={repoStatus}
+                setRepoStatus={setRepoStatus}
+                githubPat={githubPat}
+                setGithubPat={setGithubPat}
+                savedConfigs={savedConfigs}
+                onLoadConfig={loadConfig}
+                onDeleteConfig={deleteConfig}
+                isGenerating={isGenerating}
+                onGenerate={() => void handleGenerate()}
+                stages={stages}
+                logLines={logLines}
+                errorMessage={errorMessage}
+                autoExpandAuth={autoExpandAuth}
+                styles={styles}
               />
-              <Input
-                type="password"
-                value={authPassword}
-                onChange={(e) => setAuthPassword(e.target.value)}
-                placeholder="password"
-                disabled={running}
-                className="bg-white/5 border-white/10 text-sm h-8"
-              />
-            </div>
+            </motion.div>
           )}
-        </div>
 
-        {/* Stage list */}
-        {(running || isDone || errorMessage) && (
-          <div className="rounded-lg bg-white/[0.04] border border-white/[0.08] px-4 py-2 flex flex-col divide-y divide-white/[0.06]">
-            {stages.map((stage) => (
-              <StageRow key={stage.id} stage={stage} />
-            ))}
-            {errorMessage && (
-              <div className="flex items-start gap-3 py-2">
-                <XCircleIcon className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-                <p className="text-xs text-red-300 leading-relaxed">{errorMessage}</p>
-              </div>
-            )}
-          </div>
-        )}
+          {step === 2 && featureMap && script && (
+            <motion.div
+              key="step2"
+              custom={slideDir}
+              variants={SLIDE_VARIANTS}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ duration: 0.18, ease: "easeOut" }}
+              style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}
+            >
+              <Step2Script
+                featureMap={featureMap}
+                script={script}
+                isRecording={isRecording}
+                isRegenerating={isGenerating}
+                authWarning={Boolean(featureMap?.authNeeded) && !(formValues.authEmail.trim() && formValues.authPassword)}
+                onApprove={() => void handleApproveAndRecord()}
+                onRegenerate={(r) => void handleRegenerate(r)}
+                onBack={() => setStep(1)}
+                onAddCredentials={() => { setAutoExpandAuth(true); setStep(1); }}
+              />
+            </motion.div>
+          )}
 
-        {/* Open project button */}
-        {isDone && projectPath && (
-          <Button
-            onClick={handleOpenProject}
-            className="w-full h-8 text-sm bg-green-600 hover:bg-green-500 text-white"
-          >
-            <FolderOpenIcon className="w-4 h-4 mr-1.5" />
-            Open in Editor
-          </Button>
-        )}
-      </div>
-
-      {/* Footer actions */}
-      <div className="px-6 pb-5 flex gap-2 shrink-0">
-        {running ? (
-          <Button
-            onClick={handleCancel}
-            variant="outline"
-            className="flex-1 h-8 text-sm border-white/10 text-white/70 hover:text-white bg-transparent"
-          >
-            Cancel
-          </Button>
-        ) : (
-          <Button
-            onClick={handleGenerate}
-            disabled={!isReady}
-            className="flex-1 h-8 text-sm bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40"
-          >
-            Generate Demo
-          </Button>
-        )}
+          {step === 3 && (
+            <motion.div
+              key="step3"
+              custom={1}
+              variants={SLIDE_VARIANTS}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ duration: 0.18, ease: "easeOut" }}
+              style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}
+            >
+              <Step3Progress
+                stages={stages}
+                logLines={logLines}
+                errorMessage={errorMessage}
+                projectPath={projectPath}
+                isRunning={isRunning}
+                onCancel={() => void handleCancel()}
+                onOpenProject={() => void handleOpenProject()}
+                styles={styles}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

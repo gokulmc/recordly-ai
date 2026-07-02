@@ -5,6 +5,15 @@
     <link rel="icon" type="image/png" href="/app-icons/recordly-32.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Recordly</title>
+    <script>
+      // Runs before any CSS or React loads: the editor window must paint dark
+      // from its very first frame, or the light-theme body background flashes
+      // white between the window showing and the editor mounting.
+      if (new URLSearchParams(location.search).get("windowType") === "editor") {
+        document.documentElement.style.background = "#0f0f10";
+        document.documentElement.dataset.windowType = "editor";
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

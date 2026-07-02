@@ -5,6 +5,7 @@
  */
 
 import type { InteractionTrace } from "../schema/interactionTrace.js";
+import type { Target } from "../schema/target.js";
 
 export type DemoAction =
 	| "navigate"
@@ -22,8 +23,12 @@ export interface DemoStep {
 	action: DemoAction;
 	/** For navigate */
 	url?: string;
-	/** CSS selector or Playwright text/role locator string */
+	/** Durable structured locator (preferred over `selector`). */
+	target?: Target;
+	/** Legacy/explicit CSS selector or Playwright text/role locator string. */
 	selector?: string;
+	/** Recorded intent for high-confidence self-heal when the target misses. */
+	match?: { role?: string; name?: string };
 	/** Value for fill / type */
 	value?: string;
 	/** Key name for keypress (e.g. "Enter") */
@@ -34,6 +39,8 @@ export interface DemoStep {
 	waitMs?: number;
 	/** Optional LLM narration hint (used by M4 saliency) */
 	narration?: string;
+	/** Tags deterministic login steps so the recorder can detect login failure */
+	phase?: "login";
 }
 
 export interface RecordingScript {
@@ -41,6 +48,12 @@ export interface RecordingScript {
 	steps: DemoStep[];
 	viewportWidth?: number;
 	viewportHeight?: number;
+	/**
+	 * Set when the user's refinement asked for something the captured UI didn't
+	 * contain (so the focus action couldn't be honored). Surfaced to the user in
+	 * Step 2 so they aren't left guessing why their request had no effect.
+	 */
+	focusNotice?: string;
 }
 
 export interface RecorderConfig {
@@ -49,6 +62,8 @@ export interface RecorderConfig {
 	headless?: boolean;
 	/** How long to wait after each action for the page to settle (ms) */
 	postActionSettleMs?: number;
+	/** Playwright storageState file from a successful crawl login (auth carry-over). */
+	authStatePath?: string;
 }
 
 export interface RecordingResult {

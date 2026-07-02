@@ -1128,10 +1128,19 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 				}
 
 				const finalPath = result.path;
+				const autoZoomHandoff = Boolean(
+					(result as { autoZoomHandoff?: boolean }).autoZoomHandoff,
+				);
 
 				// 1. Finalize the session and switch to editor immediately (Optimistic UI)
 				// We pass null for webcamPath initially to avoid blocking on webcam disk writes/muxing.
-				await finalizeRecordingSession(finalPath, null);
+				// Skip when Auto Zoom armed the recording — it picks up the video itself
+				// via the "auto-zoom:recording-finalized" broadcast and the editor must not open.
+				if (autoZoomHandoff) {
+					setFinalizing(false);
+				} else {
+					await finalizeRecordingSession(finalPath, null);
+				}
 
 				// 2. Perform background finalization (webcam, muxing, sidecars)
 				// We don't await this to keep the UI responsive
@@ -1164,12 +1173,15 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 
 						// Update the session state to notify the editor that all background assets (webcam, mic, etc.) are now ready.
 						// This broadcasts a 'recording-session-changed' event that the open editor listens to for re-scanning assets.
-						await window.electronAPI.setCurrentRecordingSession({
-							videoPath: finalPath,
-							webcamPath,
-							timeOffsetMs: webcamTimeOffsetMs.current,
-							hideOverlayCursorByDefault: hideEditorOverlayCursorByDefault.current,
-						});
+						// Skipped on Auto Zoom handoff — no editor is open to receive it.
+						if (!autoZoomHandoff) {
+							await window.electronAPI.setCurrentRecordingSession({
+								videoPath: finalPath,
+								webcamPath,
+								timeOffsetMs: webcamTimeOffsetMs.current,
+								hideOverlayCursorByDefault: hideEditorOverlayCursorByDefault.current,
+							});
+						}
 
 						console.log(
 							`[PERF:RENDERER] Background Stop Sequence: COMPLETED in ${(performance.now() - stopStart).toFixed(2)}ms`,

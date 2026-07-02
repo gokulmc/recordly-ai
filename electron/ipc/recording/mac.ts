@@ -25,6 +25,7 @@ import {
 	setNativeScreenRecordingActive,
 } from "../state";
 import { isAutoRecordingPath, moveFileWithOverwrite } from "../utils";
+import { notifyAutoZoomRecordingFinalized } from "../autoZoom/handoff";
 import {
 	getFileSizeIfPresent,
 	recordNativeCaptureDiagnostics,
@@ -261,9 +262,12 @@ export async function finalizeStoredVideo(videoPath: string) {
 		});
 	}
 
+	const autoZoomHandoff = notifyAutoZoomRecordingFinalized(videoPath);
+
 	return {
 		success: true,
 		path: videoPath,
+		autoZoomHandoff,
 		message:
 			validation.durationSeconds !== null
 				? `Video stored successfully (${validation.fileSizeBytes} bytes, ${validation.durationSeconds.toFixed(2)}s)`

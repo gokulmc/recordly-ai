@@ -1,6 +1,7 @@
 import { BrowserWindow } from "electron";
 import { registerAssetHandlers } from "./register/assets";
 import { registerAutoDemoHandlers } from "./register/autoDemo";
+import { registerAutoZoomHandlers } from "./register/autoZoom";
 import { registerCaptionHandlers } from "./register/captions";
 import { registerExportHandlers } from "./register/export";
 import { registerPermissionHandlers } from "./register/permissions";
@@ -71,4 +72,5 @@ export function registerIpcHandlers(
 	registerProjectHandlers();
 	registerSettingsHandlers();
 	registerAutoDemoHandlers();
+	registerAutoZoomHandlers();
 }

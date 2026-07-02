@@ -160,6 +160,9 @@ export interface EditorProjectData {
 	projectId?: string;
 	videoPath: string;
 	editor: Partial<ProjectEditorState>;
+	/** Auto Zoom metadata (source + LLM analysis) — round-tripped so the
+	 * refinement panel survives editor saves, not just the first open. */
+	autoZoom?: unknown;
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -1110,11 +1113,13 @@ export function createProjectData(
 	videoPath: string,
 	editor: Partial<ProjectEditorState>,
 	projectId?: string | null,
+	extras?: { autoZoom?: unknown },
 ): EditorProjectData {
 	return {
 		version: PROJECT_VERSION,
 		...(typeof projectId === "string" && projectId.trim().length > 0 ? { projectId } : {}),
 		videoPath,
 		editor,
+		...(extras?.autoZoom ? { autoZoom: extras.autoZoom } : {}),
 	};
 }

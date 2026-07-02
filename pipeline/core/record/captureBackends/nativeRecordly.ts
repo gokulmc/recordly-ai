@@ -26,9 +26,19 @@
  * finalize() call blocks until the video file is ready.
  */
 
+export interface NativeCaptureStartedInfo {
+	outputPath: string;
+	sourceWidth: number;
+	sourceHeight: number;
+}
+
 export interface NativeRecordlyBackend {
-	/** Tells the Electron main process to start native capture. */
-	start(): Promise<void>;
+	/**
+	 * Tells the Electron main process to start native capture.
+	 * Resolves with the captured source's pixel dimensions so the caller can set
+	 * the trace's sourceFrame correctly.
+	 */
+	start(): Promise<NativeCaptureStartedInfo>;
 	/**
 	 * Stop capture and return the path to the recorded video file.
 	 * Blocks until the native backend confirms finalization.
@@ -107,12 +117,16 @@ export function createNativeRecordlyBackend(opts: NativeRecordlyOpts): NativeRec
 	const { windowTitle, outputPath, send, onMessage } = opts;
 
 	return {
-		async start(): Promise<void> {
+		async start(): Promise<NativeCaptureStartedInfo> {
 			return new Promise((resolve, reject) => {
 				const unsubscribe = onMessage((msg) => {
 					if (msg.type === "native-capture:started") {
 						unsubscribe();
-						resolve();
+						resolve({
+							outputPath: msg.outputPath,
+							sourceWidth: msg.sourceWidth,
+							sourceHeight: msg.sourceHeight,
+						});
 					} else if (msg.type === "native-capture:error") {
 						unsubscribe();
 						reject(new Error(`native-capture start failed: ${msg.message}`));

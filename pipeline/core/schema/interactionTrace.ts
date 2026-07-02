@@ -48,6 +48,10 @@ export interface InteractionEvent {
 	layoutStableAtMs?: number;
 
 	selector: string;
+	/** What the script asked for (Target/selector), before any self-heal. */
+	requestedSelector?: string;
+	/** What actually matched (after fallback/heal), if different from requested. */
+	resolvedSelector?: string;
 	role?: string;
 	accessibleName?: string;
 	/** getComputedStyle(el).cursor — raw CSS value, mapped to recordly enum later */

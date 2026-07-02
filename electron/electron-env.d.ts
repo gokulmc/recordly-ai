@@ -248,6 +248,7 @@ interface Window {
 			path?: string;
 			message?: string;
 			error?: string;
+			autoZoomHandoff?: boolean;
 		}>;
 		recoverNativeScreenRecording: () => Promise<{
 			success: boolean;
@@ -861,6 +862,9 @@ interface Window {
 		saveShortcuts: (shortcuts: unknown) => Promise<{ success: boolean; error?: string }>;
 		getAppSetting: (key: string) => unknown;
 		setAppSetting: (key: string, value: unknown) => boolean;
+		secureStoreSet: (key: string, value: string) => boolean;
+		secureStoreGet: (key: string) => string | null;
+		secureStoreDelete: (key: string) => boolean;
 		setHasUnsavedChanges: (hasChanges: boolean) => void;
 		onRequestSaveBeforeClose: (callback: () => Promise<boolean>) => () => void;
 		isNativeWindowsCaptureAvailable: () => Promise<{ available: boolean }>;
@@ -939,6 +943,7 @@ interface Window {
 		) => Promise<{ success: boolean; error?: string }>;
 
 		// ── Auto Demo ──────────────────────────────────────────────────────
+		openAutoDemoWindow: () => Promise<{ success: boolean }>;
 		autoDemoStart: (opts: {
 			repoUrl: string;
 			productionUrl: string;
@@ -954,6 +959,56 @@ interface Window {
 				message: string;
 				payload?: unknown;
 			}) => void,
+		) => () => void;
+
+		// ── Auto Demo — Granular Handlers ─────────────────────────────────
+		autoDemoCheckRepo: (url: string) => Promise<{ accessible: boolean; needsPat: boolean }>;
+		autoDemoGenerateScript: (opts: {
+			repoUrl: string;
+			productionUrl: string;
+			authEmail?: string;
+			authPassword?: string;
+			githubToken?: string;
+			focusArea?: string;
+		}) => Promise<{ success: boolean }>;
+		autoDemoRecord: (opts: {
+			scriptJson: string;
+			outDir?: string;
+			authStatePath?: string;
+		}) => Promise<{ success: boolean }>;
+		autoDemoRender: (opts: {
+			videoPath: string;
+			traceJsonPath: string;
+			productionUrl?: string;
+			outDir?: string;
+			zoomAggressiveness?: number;
+		}) => Promise<{ success: boolean }>;
+		onAutoDemoPhaseResult: (
+			callback: (result: unknown) => void,
+		) => () => void;
+
+		// ── Video Review Window ───────────────────────────────────────────
+		openVideoReview: (videoPath: string) => Promise<void>;
+		closeVideoReview: () => Promise<void>;
+		onVideoReviewDecision: (
+			callback: (decision: "approve" | "modify", zoomAggressiveness?: number) => void,
+		) => () => void;
+		sendVideoReviewDecision: (decision: "approve" | "modify", zoomAggressiveness?: number) => void;
+
+		// ── Auto Zoom ────────────────────────────────────────────────────
+		openAutoZoomWindow: () => Promise<void>;
+		autoZoomSetArmed: (armed: boolean) => Promise<{ success: boolean }>;
+		autoZoomAnalyze: (opts: { videoPath: string; cursorPath: string }) => Promise<{ success: boolean }>;
+		autoZoomRefineAnalysis: (feedback: string) => Promise<{ success: boolean }>;
+		autoZoomGenerate: (opts: { enableCaptions: boolean; enableAudio: boolean; enableAutoCrop: boolean }) => Promise<{ projectPath: string }>;
+		autoZoomRefinement: (query: string) => Promise<{ success: boolean }>;
+		autoZoomRefineRegions: (opts: { query: string; zoomRegions: unknown[] }) => Promise<{ success: boolean; zoomRegions?: unknown[]; message?: string; error?: string }>;
+		autoZoomCancel: () => Promise<void>;
+		onAutoZoomProgress: (
+			callback: (evt: { stage: string; status: "running" | "done" | "error"; message: string; payload?: unknown }) => void,
+		) => () => void;
+		onAutoZoomRecordingFinalized: (
+			callback: (result: { videoPath: string; cursorPath: string }) => void,
 		) => () => void;
 	};
 }
