@@ -30,6 +30,11 @@ const STAGE_LABELS: Record<string, string> = {
   understanding: "Understanding your app",
 };
 
+function formatTimestamp(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
 function StageIcon({ status }: { status: AutoZoomProgress["status"] }) {
   if (status === "running") return <CircleNotchIcon size={15} weight="bold" style={{ color: "var(--launch-accent)", animation: "spin 0.7s linear infinite", flexShrink: 0 }} />;
   if (status === "done") return <CheckCircleIcon size={15} weight="fill" style={{ color: "#059669", flexShrink: 0 }} />;
@@ -145,6 +150,32 @@ export function Step2Understand({
             Feature map
           </div>
           <MindMap analysis={analysis} />
+        </div>
+      )}
+
+      {/* Garbage segments the generator will cut out */}
+      {analysis && (analysis.garbageSegments?.length ?? 0) > 0 && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: "#d97706", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>
+            Will be cut
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {analysis.garbageSegments?.map((g, i) => (
+              <div
+                key={i}
+                style={{
+                  display: "flex", alignItems: "baseline", gap: 8,
+                  padding: "6px 10px", borderRadius: 8,
+                  background: "rgba(217,119,6,0.06)", border: "1px solid rgba(217,119,6,0.18)",
+                }}
+              >
+                <span style={{ fontSize: 12, fontVariantNumeric: "tabular-nums", fontWeight: 600, color: "#d97706", flexShrink: 0 }}>
+                  {formatTimestamp(g.startMs)}–{formatTimestamp(g.endMs)}
+                </span>
+                <span style={{ fontSize: 12.5, color: "var(--launch-label)", lineHeight: 1.4 }}>{g.reason}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

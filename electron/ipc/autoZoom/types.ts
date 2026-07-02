@@ -17,6 +17,13 @@ export interface AutoZoomContentRect {
   height: number;
 }
 
+export interface AutoZoomGarbageSegment {
+  startMs: number;
+  endMs: number;
+  /** Why this portion should be removed (mistake, error state, loading, wandering…). */
+  reason: string;
+}
+
 export interface AutoZoomAnalysis {
   appName: string;
   appCategory: string;
@@ -24,6 +31,8 @@ export interface AutoZoomAnalysis {
   totalDurationMs: number;
   /** Normalized 0-1 rect of the app content, excluding browser chrome. */
   contentRect?: AutoZoomContentRect;
+  /** Portions the LLM flagged for removal from the final demo. */
+  garbageSegments?: AutoZoomGarbageSegment[];
 }
 
 export interface AutoZoomProgress {
@@ -49,8 +58,10 @@ export interface AutoZoomSummary {
   vanillaRegions: number;
   deepZooms: number;
   trimmedMs: number;
-  /** Number of removed dead segments (head + tail + mid-feature gaps). */
+  /** Number of removed dead segments (head + tail + garbage + mid-feature gaps). */
   cutSegments: number;
+  /** How many of the cuts came from LLM-flagged garbage portions. */
+  garbageSegments: number;
   cropApplied: boolean;
   captions: number;
   features: number;

@@ -131,8 +131,17 @@ const ANALYSIS_SCHEMA = `{
   "totalDurationMs": number,
   "contentRect": {
     "x": number, "y": number, "width": number, "height": number
-  }
+  },
+  "garbageSegments": [
+    { "startMs": number, "endMs": number, "reason": "string (short)" }
+  ]
 }`;
+
+const GARBAGE_GUIDANCE = `garbageSegments: portions that should be REMOVED from the final demo video —
+mistakes, wrong clicks and dead ends, error states, long loading waits, wandering or idle
+exploration, repeated attempts, anything that does not contribute to demonstrating a feature.
+Be decisive: a good demo is tight, and viewers should never see fumbling. Segments may overlap
+feature spans. Return [] only if the whole recording is genuinely clean.`;
 
 const CONTENT_RECT_GUIDANCE = `contentRect: a normalized (0-1) rectangle of the application's own content area,
 excluding browser chrome (tab strip, URL/address bar, bookmarks bar). Do NOT exclude
@@ -162,7 +171,8 @@ You will receive a series of JPEG frames from a recording.
 Return ONLY valid JSON matching this schema — no markdown fences, no extra text:
 ${ANALYSIS_SCHEMA}
 All time values are in milliseconds from the start of the recording.
-${CONTENT_RECT_GUIDANCE}`;
+${CONTENT_RECT_GUIDANCE}
+${GARBAGE_GUIDANCE}`;
 
   const userParts: Anthropic.MessageParam["content"] = [
     ...imageBlocks,
@@ -177,7 +187,7 @@ Analyse the recording and return the JSON schema above.`,
 
   const response = await client.messages.create({
     model: "claude-sonnet-4-6",
-    max_tokens: 3000,
+    max_tokens: 4000,
     system: systemPrompt,
     messages: [{ role: "user", content: userParts }],
   });
@@ -206,6 +216,22 @@ function validateAnalysis(data: unknown): AutoZoomAnalysis {
       throw new Error("Analysis response has a malformed feature entry");
     }
   }
+  const garbageSegments = (Array.isArray(d.garbageSegments) ? d.garbageSegments : [])
+    .filter(
+      (g) =>
+        g &&
+        typeof g.startMs === "number" &&
+        Number.isFinite(g.startMs) &&
+        typeof g.endMs === "number" &&
+        Number.isFinite(g.endMs) &&
+        g.endMs - g.startMs >= 1500,
+    )
+    .map((g) => ({
+      startMs: Math.max(0, g.startMs),
+      endMs: g.endMs,
+      reason: typeof g.reason === "string" ? g.reason : "flagged for removal",
+    }));
+
   return {
     appName: d.appName,
     appCategory: typeof d.appCategory === "string" ? d.appCategory : "",
@@ -213,6 +239,7 @@ function validateAnalysis(data: unknown): AutoZoomAnalysis {
     totalDurationMs:
       typeof d.totalDurationMs === "number" && Number.isFinite(d.totalDurationMs) ? d.totalDurationMs : 0,
     contentRect: d.contentRect,
+    garbageSegments,
   };
 }
 
@@ -275,15 +302,18 @@ const MIN_MID_GAP_MS = 6000;
 const CUT_PAD_MS = 1000;
 
 /**
- * Derives the kept segments (editor ClipRegions) from the analysis:
- * - dead time before the first feature and after the last is trimmed (v3 behavior);
- * - dead gaps BETWEEN features are also cut, but only when they're long
- *   (> MIN_MID_GAP_MS), click-free (clicks mean something happened even if the
- *   LLM didn't label it), and past the end of the previous feature's narration
- *   (an audio region must never overlap a trim — export clips it, playback
- *   skips it mid-sentence).
+ * Derives the kept segments (editor ClipRegions) from a unified cut list:
+ * - dead time before the first feature / after the last (head/tail);
+ * - LLM-flagged garbage segments (mistakes, error states, loading, wandering) —
+ *   cut EXACTLY at the flagged boundaries, no click guard: clicking during a
+ *   mistake is still a mistake, the semantic verdict wins;
+ * - long (> MIN_MID_GAP_MS) click-free gaps between features, kept clear of
+ *   the previous feature's narration end (an audio region must never overlap
+ *   a trim — export clips it, playback skips it mid-sentence).
+ * All cut ranges are merged (sort + sweep) before taking the complement, so
+ * overlapping garbage/gap/head cuts collapse into clean clip boundaries.
  * The gaps between the returned clips are auto-derived as trims by the editor,
- * so playback/export join the kept segments seamlessly; the user can further
+ * so playback/export jump-cut across them seamlessly; the user can further
  * split/delete/adjust the clips on the timeline.
  * Returns null when there is nothing worth cutting.
  */
@@ -291,9 +321,9 @@ function deriveKeepClips(opts: {
   analysis: AutoZoomAnalysis;
   durationMs: number;
   clickTimesMs: number[];
-  /** Source-time end of each feature's narration audio (parallel to features); empty when audio disabled. */
+  /** Source-time end of each feature's narration audio (parallel to sorted features); empty when audio disabled. */
   narrationEndsMs: number[];
-}): EditorClipRegion[] | null {
+}): { clips: EditorClipRegion[]; cuts: Array<{ startMs: number; endMs: number }> } | null {
   const features = [...opts.analysis.features].sort((a, b) => a.startMs - b.startMs);
   if (!features.length) return null;
 
@@ -303,8 +333,20 @@ function deriveKeepClips(opts: {
   // Never cut down to (near) nothing — protects against bogus feature timestamps.
   if (keepEndMs - keepStartMs < MIN_CUT_MS) return null;
 
-  // Removed ranges between consecutive features.
-  const midCuts: Array<{ startMs: number; endMs: number }> = [];
+  const rawCuts: Array<{ startMs: number; endMs: number }> = [];
+
+  // Head / tail.
+  if (keepStartMs >= MIN_CUT_MS) rawCuts.push({ startMs: 0, endMs: keepStartMs });
+  if (opts.durationMs - keepEndMs >= MIN_CUT_MS) rawCuts.push({ startMs: keepEndMs, endMs: opts.durationMs });
+
+  // LLM-flagged garbage — exact boundaries, no click guard.
+  for (const g of opts.analysis.garbageSegments ?? []) {
+    const startMs = Math.max(0, Math.min(opts.durationMs, g.startMs));
+    const endMs = Math.max(startMs, Math.min(opts.durationMs, g.endMs));
+    if (endMs - startMs >= MIN_CUT_MS) rawCuts.push({ startMs, endMs });
+  }
+
+  // Long click-free gaps between features.
   for (let i = 0; i < features.length - 1; i++) {
     const prevEndMs = Math.max(features[i].endMs, opts.narrationEndsMs[i] ?? 0);
     const nextStartMs = features[i + 1].startMs;
@@ -314,31 +356,49 @@ function deriveKeepClips(opts: {
     const cutEndMs = nextStartMs - CUT_PAD_MS;
     if (cutEndMs - cutStartMs < MIN_CUT_MS) continue;
     if (opts.clickTimesMs.some((t) => t >= cutStartMs && t <= cutEndMs)) continue;
-    midCuts.push({ startMs: cutStartMs, endMs: cutEndMs });
+    rawCuts.push({ startMs: cutStartMs, endMs: cutEndMs });
   }
 
-  const headCutMs = keepStartMs;
-  const tailCutMs = Math.max(0, opts.durationMs - keepEndMs);
-  if (headCutMs < MIN_CUT_MS && tailCutMs < MIN_CUT_MS && midCuts.length === 0) return null;
+  if (!rawCuts.length) return null;
 
-  // Kept clips = complement of the cuts within [keepStartMs, keepEndMs].
+  // Merge overlapping/adjacent cut ranges (sort + sweep).
+  rawCuts.sort((a, b) => a.startMs - b.startMs);
+  const cuts: Array<{ startMs: number; endMs: number }> = [];
+  for (const cut of rawCuts) {
+    const last = cuts[cuts.length - 1];
+    if (last && cut.startMs <= last.endMs) {
+      last.endMs = Math.max(last.endMs, cut.endMs);
+    } else {
+      cuts.push({ ...cut });
+    }
+  }
+
+  // Kept clips = complement of the merged cuts within [0, durationMs].
+  // Kept slivers shorter than MIN_CUT_MS are absorbed into the surrounding cut.
   const clips: EditorClipRegion[] = [];
-  let cursor = keepStartMs;
-  for (const cut of midCuts) {
+  let cursor = 0;
+  for (const cut of cuts) {
     if (cut.startMs - cursor >= MIN_CUT_MS) {
       clips.push({ id: `clip-${clips.length + 1}`, startMs: cursor, endMs: cut.startMs, speed: 1 });
-      cursor = cut.endMs;
     }
-    // If the kept piece would be tiny, skip this cut instead (leave cursor as-is).
+    cursor = Math.max(cursor, cut.endMs);
   }
-  if (keepEndMs - cursor >= MIN_CUT_MS || clips.length === 0) {
-    clips.push({ id: `clip-${clips.length + 1}`, startMs: cursor, endMs: keepEndMs, speed: 1 });
-  } else {
-    // Tiny trailing remainder — extend the last clip to keepEndMs instead of a micro-clip.
-    clips[clips.length - 1].endMs = keepEndMs;
+  if (opts.durationMs - cursor >= MIN_CUT_MS) {
+    clips.push({ id: `clip-${clips.length + 1}`, startMs: cursor, endMs: opts.durationMs, speed: 1 });
   }
 
-  return clips;
+  // If everything got absorbed (degenerate flags covering the whole video), bail.
+  if (!clips.length) return null;
+
+  return { clips, cuts };
+}
+
+/** Same overlap predicate the editor's manual clip-delete uses (VideoEditor handleClipDelete). */
+function regionOutsideCuts(
+  region: { startMs: number; endMs: number },
+  cuts: Array<{ startMs: number; endMs: number }>,
+): boolean {
+  return cuts.every((cut) => region.endMs <= cut.startMs || region.startMs >= cut.endMs);
 }
 
 // ── macOS TTS audio (one segment per feature) ─────────────────────────────────
@@ -650,40 +710,48 @@ export function registerAutoZoomHandlers(): void {
           }
         }
 
-        send(wc, { stage: "cuts", status: "running", message: "Trimming dead time…" });
+        send(wc, { stage: "cuts", status: "running", message: "Trimming dead time & garbage…" });
         const featureList = activeAnalysis.features;
         const sortedFeatures = [...featureList].sort((a, b) => a.startMs - b.startMs);
         const narrationEndsMs = sortedFeatures.map((f) => {
           const seg = narrationSegments.find((s) => featureList[s.featureIndex] === f);
           return seg ? seg.endMs : 0;
         });
-        const keepClips = deriveKeepClips({
+        const cutResult = deriveKeepClips({
           analysis: activeAnalysis,
           durationMs,
           clickTimesMs: readClickTimesMs(activeCursorPath),
           narrationEndsMs,
         });
+        const keepClips = cutResult?.clips ?? null;
+        const cuts = cutResult?.cuts ?? [];
         const keptMs = keepClips ? keepClips.reduce((sum, c) => sum + (c.endMs - c.startMs), 0) : durationMs;
         const trimmedMs = Math.max(0, durationMs - keptMs);
-        const cutSegments = keepClips
-          ? (keepClips[0].startMs > 0 ? 1 : 0) +
-            (keepClips[keepClips.length - 1].endMs < durationMs ? 1 : 0) +
-            (keepClips.length - 1)
-          : 0;
+        const garbageCount = activeAnalysis.garbageSegments?.length ?? 0;
         send(wc, {
           stage: "cuts",
           status: "done",
           message: keepClips
-            ? `Removed ${cutSegments} dead segment${cutSegments === 1 ? "" : "s"} (${Math.round(trimmedMs / 1000)}s total)`
+            ? `Removed ${cuts.length} dead segment${cuts.length === 1 ? "" : "s"} (${Math.round(trimmedMs / 1000)}s total${garbageCount ? `, ${garbageCount} flagged as garbage` : ""})`
             : "No dead time to trim",
         });
+
+        // Match the editor's manual clip-delete semantics: regions overlapping a
+        // removed range are dropped (a garbage portion must not be zoomed into or
+        // narrated — and an audio region overlapping a trim breaks playback/export).
+        const keptZoomRegions = cuts.length
+          ? zoomRegions.filter((r) => regionOutsideCuts(r, cuts))
+          : zoomRegions;
+        const keptNarrationSegments = cuts.length
+          ? narrationSegments.filter((s) => regionOutsideCuts(s, cuts))
+          : narrationSegments;
 
         send(wc, { stage: "assemble", status: "running", message: "Assembling project…" });
         const projectPath = await assembleProject({
           videoPath: activeVideoPath,
-          zoomRegions,
+          zoomRegions: keptZoomRegions,
           captions,
-          narrationSegments,
+          narrationSegments: keptNarrationSegments,
           cropRegion,
           keepClips,
           analysis: activeAnalysis,
@@ -693,11 +761,12 @@ export function registerAutoZoomHandlers(): void {
 
         const summary: AutoZoomSummary = {
           appName: activeAnalysis.appName,
-          autoZoomRegions: zoomRegions.length,
+          autoZoomRegions: keptZoomRegions.length,
           vanillaRegions: vanillaCount,
-          deepZooms: zoomRegions.filter((r) => r.depth >= 3).length,
+          deepZooms: keptZoomRegions.filter((r) => r.depth >= 3).length,
           trimmedMs,
-          cutSegments,
+          cutSegments: cuts.length,
+          garbageSegments: garbageCount,
           cropApplied: cropRegion !== IDENTITY_CROP,
           captions: captions.length,
           features: activeAnalysis.features.length,

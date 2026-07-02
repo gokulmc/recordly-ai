@@ -59,8 +59,15 @@ function SummaryCard({ summary }: { summary: AutoZoomSummary }) {
         {summary.trimmedMs > 0 && (
           <Row
             label="Dead time trimmed"
-            value={`${formatSeconds(summary.trimmedMs)} across ${summary.cutSegments} cut${summary.cutSegments === 1 ? "" : "s"}`}
+            value={
+              summary.cutSegments
+                ? `${formatSeconds(summary.trimmedMs)} across ${summary.cutSegments} cut${summary.cutSegments === 1 ? "" : "s"}`
+                : formatSeconds(summary.trimmedMs)
+            }
           />
+        )}
+        {summary.garbageSegments > 0 && (
+          <Row label="Garbage removed" value={`${summary.garbageSegments} segment${summary.garbageSegments === 1 ? "" : "s"}`} />
         )}
         <Row label="Chrome crop" value={summary.cropApplied ? "Applied" : "Off"} />
         <Row label="Captions / features" value={`${summary.captions} / ${summary.features}`} />

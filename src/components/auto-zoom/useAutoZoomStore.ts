@@ -19,12 +19,19 @@ export interface AutoZoomContentRect {
   height: number;
 }
 
+export interface AutoZoomGarbageSegment {
+  startMs: number;
+  endMs: number;
+  reason: string;
+}
+
 export interface AutoZoomAnalysis {
   appName: string;
   appCategory: string;
   features: AutoZoomFeature[];
   totalDurationMs: number;
   contentRect?: AutoZoomContentRect;
+  garbageSegments?: AutoZoomGarbageSegment[];
 }
 
 export interface AutoZoomProgress {
@@ -42,6 +49,7 @@ export interface AutoZoomSummary {
   deepZooms: number;
   trimmedMs: number;
   cutSegments: number;
+  garbageSegments: number;
   cropApplied: boolean;
   captions: number;
   features: number;
