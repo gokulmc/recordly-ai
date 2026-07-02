@@ -84,11 +84,30 @@ export function AutoZoomWindow() {
 
   async function handleOpenProject() {
     if (!projectPath) return;
-    const result = await window.electronAPI?.openProjectFileAtPath?.(projectPath);
-    if (result?.success) {
+    pushProgress({ stage: "open", status: "running", message: "Opening in editor…" });
+    try {
+      const result = await window.electronAPI?.openProjectFileAtPath?.(projectPath);
+      if (!result?.success) {
+        pushProgress({ stage: "open", status: "error", message: "Failed to open the project file" });
+        return;
+      }
       await window.electronAPI?.switchToEditor?.();
+      pushProgress({ stage: "open", status: "done", message: "Opened in editor" });
+      // Auto Zoom's job is done — the rest of the work happens in the editor.
+      window.close();
+    } catch (err) {
+      pushProgress({ stage: "open", status: "error", message: String(err) });
     }
   }
+
+  // Once the project is assembled, open it in the editor automatically —
+  // no manual click needed.
+  const openTriggeredRef = useRef(false);
+  useEffect(() => {
+    if (!projectPath || openTriggeredRef.current) return;
+    openTriggeredRef.current = true;
+    void handleOpenProject();
+  }, [projectPath]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   return (
@@ -170,9 +189,9 @@ export function AutoZoomWindow() {
               transition={{ duration: 0.18, ease: "easeOut" }}
               style={{ display: "flex", flexDirection: "column", flex: 1, overflowY: "auto" }}
             >
-              <StepHeader title={projectPath ? "All done!" : "Generating your demo…"} step={3} />
+              <StepHeader title={projectPath ? "Opening in editor…" : "Generating your demo…"} step={3} />
               <Step3Generate
-                progresses={progresses.filter((p) => ["zooms", "captions", "audio", "assemble"].includes(p.stage))}
+                progresses={progresses.filter((p) => ["zooms", "captions", "audio", "assemble", "open"].includes(p.stage))}
                 projectPath={projectPath}
                 error={error}
                 onOpenProject={() => void handleOpenProject()}

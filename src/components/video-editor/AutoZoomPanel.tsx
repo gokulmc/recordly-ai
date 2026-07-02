@@ -60,7 +60,7 @@ export function AutoZoomPanel({ analysis, zoomRegions, onZoomRegionsUpdate }: Pr
         <MagicWandIcon size={12} style={{ color: "#6366f1", flexShrink: 0 }} />
         <span style={{ color: "#6366f1", fontWeight: 600 }}>Auto Zoom</span>
         <span style={{ flex: 1, textAlign: "left" }}>
-          {analysis.appName} · {analysis.features.length} features · {zoomRegions.length} zoom regions
+          {analysis.appName ?? "App"} · {analysis.features?.length ?? 0} features · {zoomRegions.length} zoom regions
         </span>
         {isExpanded ? <CaretDownIcon size={12} /> : <CaretUpIcon size={12} />}
       </button>

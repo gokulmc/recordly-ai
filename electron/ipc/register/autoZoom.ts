@@ -161,14 +161,43 @@ Analyse the recording and return the JSON schema above.`,
 
   const response = await client.messages.create({
     model: "claude-sonnet-4-6",
-    max_tokens: 2000,
+    max_tokens: 3000,
     system: systemPrompt,
     messages: [{ role: "user", content: userParts }],
   });
 
   const raw = response.content.find((b) => b.type === "text")?.text ?? "{}";
   const clean = raw.replace(/^```[a-z]*\n?/, "").replace(/\n?```$/, "");
-  return JSON.parse(clean) as AutoZoomAnalysis;
+  return validateAnalysis(JSON.parse(clean));
+}
+
+/**
+ * Guard the LLM's JSON before it becomes `activeAnalysis` — a malformed shape
+ * (missing/renamed fields, truncated response) must fail loudly here, not
+ * propagate into the assembled project and crash the editor's render later
+ * (there is no error boundary around the editor tree).
+ */
+function validateAnalysis(data: unknown): AutoZoomAnalysis {
+  if (!data || typeof data !== "object") {
+    throw new Error("Analysis response was not a JSON object");
+  }
+  const d = data as Partial<AutoZoomAnalysis>;
+  if (typeof d.appName !== "string" || !Array.isArray(d.features)) {
+    throw new Error("Analysis response is missing appName/features");
+  }
+  for (const f of d.features) {
+    if (typeof f?.name !== "string" || !Array.isArray(f.interactions)) {
+      throw new Error("Analysis response has a malformed feature entry");
+    }
+  }
+  return {
+    appName: d.appName,
+    appCategory: typeof d.appCategory === "string" ? d.appCategory : "",
+    features: d.features as AutoZoomAnalysis["features"],
+    totalDurationMs:
+      typeof d.totalDurationMs === "number" && Number.isFinite(d.totalDurationMs) ? d.totalDurationMs : 0,
+    contentRect: d.contentRect,
+  };
 }
 
 /** Clamp/guard the LLM's contentRect so an over-eager crop can't eat the page. */

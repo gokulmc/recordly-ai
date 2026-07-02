@@ -2133,10 +2133,17 @@ export default function VideoEditor() {
 					0,
 				) + 1;
 
-			// Detect auto-zoom projects and surface the refinement panel
+			// Detect auto-zoom projects and surface the refinement panel. Guard the
+			// shape here — a malformed LLM analysis must never reach the panel and
+			// crash the render (no error boundary wraps the editor tree).
 			const rawProject = project as unknown as Record<string, unknown>;
 			const rawAutoZoom = rawProject.autoZoom as Record<string, unknown> | undefined;
-			setAutoZoomAnalysis((rawAutoZoom?.analysis as AutoZoomAnalysis) ?? null);
+			const rawAnalysis = rawAutoZoom?.analysis as Partial<AutoZoomAnalysis> | undefined;
+			setAutoZoomAnalysis(
+				rawAnalysis && typeof rawAnalysis.appName === "string" && Array.isArray(rawAnalysis.features)
+					? (rawAnalysis as AutoZoomAnalysis)
+					: null,
+			);
 
 			resetEditorHistoryStack(editorHistoryRef.current);
 			applyingHistoryRef.current = false;

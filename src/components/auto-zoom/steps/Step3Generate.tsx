@@ -14,9 +14,10 @@ const STAGE_LABELS: Record<string, string> = {
   captions: "Building captions",
   audio: "Generating narration",
   assemble: "Assembling project",
+  open: "Opening in editor",
 };
 
-const STAGE_ORDER = ["zooms", "captions", "audio", "assemble"];
+const STAGE_ORDER = ["zooms", "captions", "audio", "assemble", "open"];
 
 function StageIcon({ status }: { status: string }) {
   if (status === "running") return <CircleNotchIcon size={15} weight="bold" style={{ color: "var(--launch-accent)", animation: "spin 0.7s linear infinite", flexShrink: 0 }} />;
@@ -27,7 +28,7 @@ function StageIcon({ status }: { status: string }) {
 
 export function Step3Generate({ progresses, projectPath, error, onOpenProject, styles: _styles }: Props) {
   const progressMap = Object.fromEntries(progresses.map((p) => [p.stage, p]));
-  const isDone = !!projectPath;
+  const openFailed = progressMap.open?.status === "error";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -74,9 +75,10 @@ export function Step3Generate({ progresses, projectPath, error, onOpenProject, s
         )}
       </div>
 
-      {/* Open project footer */}
-      <div style={{ flexShrink: 0, borderTop: "1px solid var(--launch-border)", padding: "10px 20px 14px" }}>
-        {isDone ? (
+      {/* The editor opens automatically once assembly finishes — this footer
+          only appears if that final step itself failed, as a manual retry. */}
+      {projectPath && openFailed && (
+        <div style={{ flexShrink: 0, borderTop: "1px solid var(--launch-border)", padding: "10px 20px 14px" }}>
           <button
             type="button"
             onClick={onOpenProject}
@@ -88,12 +90,10 @@ export function Step3Generate({ progresses, projectPath, error, onOpenProject, s
             }}
           >
             <FolderOpenIcon size={15} />
-            Open in Editor
+            Retry opening in editor
           </button>
-        ) : (
-          <div style={{ height: 42 }} />
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
