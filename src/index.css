@@ -136,6 +136,14 @@
 		font-family: var(--app-font-sans);
 	}
 
+	/* The editor window paints dark from its very first frame (inline script in
+	   index.html sets the data attribute before CSS loads) — without this, the
+	   light-theme body background flashes white until the editor mounts. The
+	   loaded editor's own root (bg-editor-bg, full-screen) covers this anyway. */
+	html[data-window-type="editor"] body {
+		background: #0f0f10;
+	}
+
 	button,
 	input,
 	textarea,
