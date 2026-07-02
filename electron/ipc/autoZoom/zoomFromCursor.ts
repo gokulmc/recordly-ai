@@ -94,7 +94,7 @@ export async function deriveZoomRegionsFromCursor(opts: {
   analysis: AutoZoomAnalysis;
   crop?: AutoZoomContentRect;
   totalDurationMs: number;
-}): Promise<{ regions: EditorZoomRegion[]; source: "cursor" | "fallback" }> {
+}): Promise<{ regions: EditorZoomRegion[]; source: "cursor" | "fallback"; vanillaCount: number }> {
   const crop = opts.crop ?? IDENTITY_CROP;
 
   let samples: CursorTelemetryPoint[] = [];
@@ -107,7 +107,7 @@ export async function deriveZoomRegionsFromCursor(opts: {
   }
 
   if (!samples.length) {
-    return { regions: centeredFallbackRegions(opts.analysis, crop), source: "fallback" };
+    return { regions: centeredFallbackRegions(opts.analysis, crop), source: "fallback", vanillaCount: 0 };
   }
 
   const clickResult = buildInteractionZoomSuggestions({
@@ -115,9 +115,12 @@ export async function deriveZoomRegionsFromCursor(opts: {
     totalMs: opts.totalDurationMs,
     defaultDurationMs: 2200,
   });
+  // The plain click-cluster count is what default Recordly's own "suggest zooms" would
+  // propose from this same telemetry — used for the before/after comparison in Step 3.
+  const vanillaCount = clickResult.status === "ok" ? clickResult.suggestions.length : 0;
 
   if (clickResult.status !== "ok" || !clickResult.suggestions.length) {
-    return { regions: centeredFallbackRegions(opts.analysis, crop), source: "fallback" };
+    return { regions: centeredFallbackRegions(opts.analysis, crop), source: "fallback", vanillaCount };
   }
 
   const candidates: CandidateRegion[] = [];
@@ -180,5 +183,5 @@ export async function deriveZoomRegionsFromCursor(opts: {
     mode: "auto",
   }));
 
-  return { regions, source: "cursor" };
+  return { regions, source: "cursor", vanillaCount };
 }

@@ -24,11 +24,17 @@ import {
 import { setAutoZoomArmed, setAutoZoomFinalizedCallback } from "../autoZoom/handoff";
 import { deriveZoomRegionsFromCursor } from "../autoZoom/zoomFromCursor";
 import { IDENTITY_CROP } from "../autoZoom/types";
-import type { AutoZoomAnalysis, AutoZoomContentRect, AutoZoomProgress } from "../autoZoom/types";
+import type {
+  AutoZoomAnalysis,
+  AutoZoomContentRect,
+  AutoZoomProgress,
+  AutoZoomSummary,
+} from "../autoZoom/types";
 import { getFfmpegBinaryPath } from "../ffmpeg/binary";
+import { validateRecordedVideo } from "../recording/diagnostics";
 import { rememberApprovedLocalReadPath } from "../project/manager";
 
-export type { AutoZoomAnalysis, AutoZoomFeature, AutoZoomProgress } from "../autoZoom/types";
+export type { AutoZoomAnalysis, AutoZoomFeature, AutoZoomProgress, AutoZoomSummary } from "../autoZoom/types";
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -37,6 +43,8 @@ let activeCursorPath = "";
 let activeAnalysis: AutoZoomAnalysis | null = null;
 let activeConversation: string[] = [];
 let activeFrameDir = "";
+/** Real probed video duration (ffmpeg), not the LLM's guess — see auto-zoom:analyze. */
+let activeDurationMs = 0;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -124,6 +132,9 @@ const ANALYSIS_SCHEMA = `{
 const CONTENT_RECT_GUIDANCE = `contentRect: a normalized (0-1) rectangle of the application's own content area,
 excluding browser chrome (tab strip, URL/address bar, bookmarks bar). Do NOT exclude
 in-app navigation, the macOS menu bar, or the dock — only literal browser chrome.
+Measure precisely against the actual pixel boundary where chrome ends and page content
+begins. If you are unsure of the exact boundary, err toward cropping slightly MORE —
+a few extra pixels of page content is far better than leaving any sliver of chrome visible.
 If no browser chrome is visible in the recording, return {"x":0,"y":0,"width":1,"height":1}.`;
 
 async function runAnalysisLLM(
@@ -200,13 +211,25 @@ function validateAnalysis(data: unknown): AutoZoomAnalysis {
   };
 }
 
+/** Extra inward push applied to any edge the LLM identified as having chrome —
+ * a bit of extra cropped page beats leaving a sliver of tab/URL bar visible. */
+const CROP_SAFETY_INSET = 0.015;
+
 /** Clamp/guard the LLM's contentRect so an over-eager crop can't eat the page. */
 function normalizeContentRect(rect: AutoZoomContentRect | undefined): AutoZoomContentRect {
   if (!rect) return IDENTITY_CROP;
-  const x = Math.min(1, Math.max(0, rect.x ?? 0));
-  const y = Math.min(1, Math.max(0, rect.y ?? 0));
-  const width = Math.min(1 - x, Math.max(0, rect.width ?? 1));
-  const height = Math.min(1 - y, Math.max(0, rect.height ?? 1));
+  let x = Math.min(1, Math.max(0, rect.x ?? 0));
+  let y = Math.min(1, Math.max(0, rect.y ?? 0));
+  let right = Math.min(1, x + Math.max(0, rect.width ?? 1));
+  let bottom = Math.min(1, y + Math.max(0, rect.height ?? 1));
+
+  if (x > 0) x = Math.min(1, x + CROP_SAFETY_INSET);
+  if (y > 0) y = Math.min(1, y + CROP_SAFETY_INSET);
+  if (right < 1) right = Math.max(0, right - CROP_SAFETY_INSET);
+  if (bottom < 1) bottom = Math.max(0, bottom - CROP_SAFETY_INSET);
+
+  const width = Math.max(0, right - x);
+  const height = Math.max(0, bottom - y);
   if (width < 0.5 || height < 0.5) return IDENTITY_CROP;
   return { x, y, width, height };
 }
@@ -227,6 +250,41 @@ function analysisToCaptions(analysis: AutoZoomAnalysis): Caption[] {
     endMs: f.endMs,
     text: f.narration,
   }));
+}
+
+// ── Cuts (trim dead intro/outro) ──────────────────────────────────────────────
+
+/** Editor's ClipRegion shape at speed=1 — startMs/endMs are source-video timestamps. */
+interface EditorClipRegion {
+  id: string;
+  startMs: number;
+  endMs: number;
+  speed: number;
+}
+
+/** Below this, a trim isn't worth making — avoids micro-cuts from timing noise. */
+const MIN_CUT_MS = 2500;
+
+/**
+ * The demo rarely starts the instant the recording does (desktop, app launch,
+ * clicking into the window) — trim the dead time before the first feature and
+ * after the last one. Only the head/tail are touched; nothing between features
+ * is cut, since mid-recording gaps may still be meaningful context.
+ */
+function deriveKeepClip(analysis: AutoZoomAnalysis, durationMs: number): EditorClipRegion | null {
+  if (!analysis.features.length) return null;
+  const firstStartMs = Math.min(...analysis.features.map((f) => f.startMs));
+  const lastEndMs = Math.max(...analysis.features.map((f) => f.endMs));
+  const keepStartMs = Math.max(0, Math.min(durationMs, firstStartMs - 1000));
+  const keepEndMs = Math.max(keepStartMs, Math.min(durationMs, lastEndMs + 1000));
+
+  const headCutMs = keepStartMs;
+  const tailCutMs = Math.max(0, durationMs - keepEndMs);
+  if (headCutMs < MIN_CUT_MS && tailCutMs < MIN_CUT_MS) return null;
+  // Never cut down to (near) nothing — protects against bogus feature timestamps.
+  if (keepEndMs - keepStartMs < MIN_CUT_MS) return null;
+
+  return { id: "clip-1", startMs: keepStartMs, endMs: keepEndMs, speed: 1 };
 }
 
 // ── macOS TTS audio ───────────────────────────────────────────────────────────
@@ -291,22 +349,29 @@ async function assembleProject(opts: {
   captions: Caption[];
   audioPath: string | null;
   cropRegion: AutoZoomContentRect;
+  keepClip: EditorClipRegion | null;
   analysis: AutoZoomAnalysis;
   outDir: string;
 }): Promise<string> {
+  // The narration track is one continuous clip spanning the video — clamp it to the
+  // kept span so it doesn't play into the trimmed dead intro/outro.
+  const audioStartMs = opts.keepClip?.startMs ?? 0;
+  const audioEndMs = opts.keepClip?.endMs ?? opts.analysis.totalDurationMs;
+
   const editor = {
     zoomRegions: opts.zoomRegions,
     showCursor: true,
     loopCursor: false,
     ...(opts.cropRegion !== IDENTITY_CROP ? { cropRegion: opts.cropRegion } : {}),
+    ...(opts.keepClip ? { clipRegions: [opts.keepClip] } : {}),
     ...(opts.captions.length ? { autoCaptions: opts.captions } : {}),
     ...(opts.audioPath
       ? {
           audioRegions: [
             {
               id: "audio-1",
-              startMs: 0,
-              endMs: opts.analysis.totalDurationMs,
+              startMs: audioStartMs,
+              endMs: audioEndMs,
               audioPath: opts.audioPath,
               volume: 1,
               normalize: false,
@@ -371,18 +436,23 @@ export function registerAutoZoomHandlers(): void {
     activeFrameDir = path.join(os.tmpdir(), `recordly-auto-zoom-${Date.now()}`);
 
     try {
-      send(wc, { stage: "frames", status: "running", message: "Extracting frames from recording…" });
-      const framePaths = await extractFrames(opts.videoPath, activeFrameDir, 2, 60);
-      send(wc, { stage: "frames", status: "done", message: `Extracted ${framePaths.length} frames` });
+      // Probe the real duration so frame sampling and zoom clamping cover the
+      // ENTIRE recording, not just an estimated first ~2 minutes.
+      const { durationSeconds } = await validateRecordedVideo(opts.videoPath);
+      activeDurationMs = Math.round(durationSeconds * 1000);
+      const intervalSecs = Math.max(2, Math.ceil(durationSeconds / 60));
 
-      // Estimate video duration from frame count
-      const videoDurationMs = framePaths.length * 2000;
+      send(wc, { stage: "frames", status: "running", message: "Extracting frames from recording…" });
+      const framePaths = await extractFrames(opts.videoPath, activeFrameDir, intervalSecs, 60);
+      send(wc, { stage: "frames", status: "done", message: `Extracted ${framePaths.length} frames` });
 
       send(wc, { stage: "understanding", status: "running", message: "Understanding your app…" });
       const frames = await framesToBase64(framePaths, 20);
-      const summary = cursorSummary(opts.cursorPath, Math.round(videoDurationMs / 1000));
+      const summary = cursorSummary(opts.cursorPath, Math.round(activeDurationMs / 1000));
 
-      activeAnalysis = await runAnalysisLLM(frames, summary, videoDurationMs, []);
+      activeAnalysis = await runAnalysisLLM(frames, summary, activeDurationMs, []);
+      // The LLM's own duration guess is unreliable — the probed value is ground truth.
+      activeAnalysis.totalDurationMs = activeDurationMs;
       send(wc, {
         stage: "understanding",
         status: "done",
@@ -413,11 +483,12 @@ export function registerAutoZoomHandlers(): void {
             .map((f) => path.join(activeFrameDir, f))
         : [];
 
-      const videoDurationMs = activeAnalysis.totalDurationMs || framePaths.length * 2000;
+      const videoDurationMs = activeDurationMs || activeAnalysis.totalDurationMs || framePaths.length * 2000;
       const frames = await framesToBase64(framePaths, 20);
       const summary = cursorSummary(activeCursorPath, Math.round(videoDurationMs / 1000));
 
       activeAnalysis = await runAnalysisLLM(frames, summary, videoDurationMs, activeConversation);
+      activeAnalysis.totalDurationMs = videoDurationMs;
       send(wc, {
         stage: "understanding",
         status: "done",
@@ -441,16 +512,17 @@ export function registerAutoZoomHandlers(): void {
 
       try {
         const outDir = path.join(path.dirname(activeVideoPath), `auto-zoom-${Date.now()}`);
+        const durationMs = activeDurationMs || activeAnalysis.totalDurationMs;
         const cropRegion = opts.enableAutoCrop
           ? normalizeContentRect(activeAnalysis.contentRect)
           : IDENTITY_CROP;
 
         send(wc, { stage: "zooms", status: "running", message: "Deriving zoom regions…" });
-        const { regions: zoomRegions, source } = await deriveZoomRegionsFromCursor({
+        const { regions: zoomRegions, source, vanillaCount } = await deriveZoomRegionsFromCursor({
           cursorPath: activeCursorPath,
           analysis: activeAnalysis,
           crop: cropRegion,
-          totalDurationMs: activeAnalysis.totalDurationMs,
+          totalDurationMs: durationMs,
         });
         send(wc, {
           stage: "zooms",
@@ -474,6 +546,17 @@ export function registerAutoZoomHandlers(): void {
           }
         }
 
+        send(wc, { stage: "cuts", status: "running", message: "Trimming dead time…" });
+        const keepClip = deriveKeepClip(activeAnalysis, durationMs);
+        const trimmedMs = keepClip
+          ? Math.max(0, durationMs - (keepClip.endMs - keepClip.startMs))
+          : 0;
+        send(wc, {
+          stage: "cuts",
+          status: "done",
+          message: keepClip ? `Trimmed ${Math.round(trimmedMs / 1000)}s of dead intro/outro` : "No dead time to trim",
+        });
+
         send(wc, { stage: "assemble", status: "running", message: "Assembling project…" });
         const projectPath = await assembleProject({
           videoPath: activeVideoPath,
@@ -481,11 +564,23 @@ export function registerAutoZoomHandlers(): void {
           captions,
           audioPath,
           cropRegion,
+          keepClip,
           analysis: activeAnalysis,
           outDir,
         });
         await rememberApprovedLocalReadPath(projectPath);
-        send(wc, { stage: "assemble", status: "done", message: "Project ready", payload: { projectPath } });
+
+        const summary: AutoZoomSummary = {
+          appName: activeAnalysis.appName,
+          autoZoomRegions: zoomRegions.length,
+          vanillaRegions: vanillaCount,
+          deepZooms: zoomRegions.filter((r) => r.depth >= 3).length,
+          trimmedMs,
+          cropApplied: cropRegion !== IDENTITY_CROP,
+          captions: captions.length,
+          features: activeAnalysis.features.length,
+        };
+        send(wc, { stage: "assemble", status: "done", message: "Project ready", payload: { projectPath, summary } });
 
         return { projectPath };
       } catch (err) {

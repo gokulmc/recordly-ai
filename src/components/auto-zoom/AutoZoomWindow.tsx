@@ -38,6 +38,7 @@ export function AutoZoomWindow() {
     enableAudio, setEnableAudio,
     enableAutoCrop, setEnableAutoCrop,
     projectPath,
+    summary,
     error,
   } = store;
 
@@ -100,13 +101,17 @@ export function AutoZoomWindow() {
     }
   }
 
-  // Once the project is assembled, open it in the editor automatically —
-  // no manual click needed.
+  // Once the project is assembled, open it in the editor automatically — no
+  // manual click needed. Pause briefly so the user has time to see the
+  // Auto Zoom vs default comparison before the window hands off.
   const openTriggeredRef = useRef(false);
   useEffect(() => {
     if (!projectPath || openTriggeredRef.current) return;
     openTriggeredRef.current = true;
-    void handleOpenProject();
+    const timer = setTimeout(() => {
+      void handleOpenProject();
+    }, 2000);
+    return () => clearTimeout(timer);
   }, [projectPath]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
@@ -189,10 +194,11 @@ export function AutoZoomWindow() {
               transition={{ duration: 0.18, ease: "easeOut" }}
               style={{ display: "flex", flexDirection: "column", flex: 1, overflowY: "auto" }}
             >
-              <StepHeader title={projectPath ? "Opening in editor…" : "Generating your demo…"} step={3} />
+              <StepHeader title={summary ? "Here's what Auto Zoom did" : "Generating your demo…"} step={3} />
               <Step3Generate
-                progresses={progresses.filter((p) => ["zooms", "captions", "audio", "assemble", "open"].includes(p.stage))}
+                progresses={progresses.filter((p) => ["zooms", "captions", "audio", "cuts", "assemble", "open"].includes(p.stage))}
                 projectPath={projectPath}
+                summary={summary}
                 error={error}
                 onOpenProject={() => void handleOpenProject()}
                 styles={styles}

@@ -42,4 +42,16 @@ export interface EditorZoomRegion {
   mode: "auto";
 }
 
+/** What Step 3 shows as the before/after comparison card once generation finishes. */
+export interface AutoZoomSummary {
+  appName: string;
+  autoZoomRegions: number;
+  vanillaRegions: number;
+  deepZooms: number;
+  trimmedMs: number;
+  cropApplied: boolean;
+  captions: number;
+  features: number;
+}
+
 export const IDENTITY_CROP: AutoZoomContentRect = { x: 0, y: 0, width: 1, height: 1 };

@@ -34,6 +34,18 @@ export interface AutoZoomProgress {
   payload?: unknown;
 }
 
+/** Before/after comparison shown on Step 3 once generation finishes. */
+export interface AutoZoomSummary {
+  appName: string;
+  autoZoomRegions: number;
+  vanillaRegions: number;
+  deepZooms: number;
+  trimmedMs: number;
+  cropApplied: boolean;
+  captions: number;
+  features: number;
+}
+
 export type AutoZoomStep = 1 | 2 | 3;
 
 export interface AutoZoomState {
@@ -47,6 +59,7 @@ export interface AutoZoomState {
   enableAudio: boolean;
   enableAutoCrop: boolean;
   projectPath: string | null;
+  summary: AutoZoomSummary | null;
   error: string | null;
 }
 
@@ -63,6 +76,7 @@ export function useAutoZoomStore() {
   const [enableAudio, setEnableAudio] = useState(true);
   const [enableAutoCrop, setEnableAutoCrop] = useState(true);
   const [projectPath, setProjectPath] = useState<string | null>(null);
+  const [summary, setSummary] = useState<AutoZoomSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const pushProgress = useCallback((p: AutoZoomProgress) => {
@@ -79,8 +93,9 @@ export function useAutoZoomStore() {
       setAnalysis(p.payload as AutoZoomAnalysis);
     }
     if (p.stage === "assemble" && p.status === "done") {
-      const pl = p.payload as Record<string, string> | undefined;
+      const pl = p.payload as { projectPath?: string; summary?: AutoZoomSummary } | undefined;
       if (pl?.projectPath) setProjectPath(pl.projectPath);
+      if (pl?.summary) setSummary(pl.summary);
     }
     if (p.status === "error") setError(p.message);
   }, []);
@@ -96,6 +111,7 @@ export function useAutoZoomStore() {
     setEnableAudio(true);
     setEnableAutoCrop(true);
     setProjectPath(null);
+    setSummary(null);
     setError(null);
   }, []);
 
@@ -110,6 +126,7 @@ export function useAutoZoomStore() {
     enableAudio, setEnableAudio,
     enableAutoCrop, setEnableAutoCrop,
     projectPath,
+    summary,
     error, setError,
     reset,
   };
