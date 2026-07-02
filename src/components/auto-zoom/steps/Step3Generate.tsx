@@ -56,7 +56,12 @@ function SummaryCard({ summary }: { summary: AutoZoomSummary }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         <Row label="Zoom regions" value={`${summary.autoZoomRegions} smart (${deltaLabel} · ${summary.deepZooms} deep)`} />
         <Row label="Default would suggest" value={`${summary.vanillaRegions} basic zoom${summary.vanillaRegions === 1 ? "" : "s"}`} />
-        {summary.trimmedMs > 0 && <Row label="Dead time trimmed" value={formatSeconds(summary.trimmedMs)} />}
+        {summary.trimmedMs > 0 && (
+          <Row
+            label="Dead time trimmed"
+            value={`${formatSeconds(summary.trimmedMs)} across ${summary.cutSegments} cut${summary.cutSegments === 1 ? "" : "s"}`}
+          />
+        )}
         <Row label="Chrome crop" value={summary.cropApplied ? "Applied" : "Off"} />
         <Row label="Captions / features" value={`${summary.captions} / ${summary.features}`} />
       </div>

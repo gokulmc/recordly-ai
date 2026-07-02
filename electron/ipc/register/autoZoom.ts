@@ -31,7 +31,7 @@ import type {
   AutoZoomSummary,
 } from "../autoZoom/types";
 import { getFfmpegBinaryPath } from "../ffmpeg/binary";
-import { validateRecordedVideo } from "../recording/diagnostics";
+import { parseFfmpegDurationSeconds, validateRecordedVideo } from "../recording/diagnostics";
 import { rememberApprovedLocalReadPath } from "../project/manager";
 
 export type { AutoZoomAnalysis, AutoZoomFeature, AutoZoomProgress, AutoZoomSummary } from "../autoZoom/types";
@@ -93,18 +93,23 @@ async function framesToBase64(framePaths: string[], maxFrames = 20): Promise<Arr
   );
 }
 
-/** Build cursor telemetry summary (key clicks at approximate seconds). */
-function cursorSummary(cursorPath: string, totalSecs: number): string {
+/** Click timestamps (ms) from the cursor sidecar — empty array when unreadable. */
+function readClickTimesMs(cursorPath: string): number[] {
   try {
     const data = JSON.parse(fs.readFileSync(cursorPath, "utf-8"));
-    const clicks: number[] = (data.samples ?? [])
-      .filter((s: { interactionType?: string }) => s.interactionType === "click")
-      .map((s: { timeMs: number }) => Math.round(s.timeMs / 1000));
-    if (!clicks.length) return "No click events captured.";
-    return `Click events at seconds: ${clicks.slice(0, 40).join(", ")}. Total duration: ~${totalSecs}s.`;
+    return ((data.samples ?? []) as Array<{ timeMs: number; interactionType?: string }>)
+      .filter((s) => s.interactionType === "click")
+      .map((s) => s.timeMs);
   } catch {
-    return `Total duration: ~${totalSecs}s.`;
+    return [];
   }
+}
+
+/** Build cursor telemetry summary (key clicks at approximate seconds). */
+function cursorSummary(cursorPath: string, totalSecs: number): string {
+  const clicks = readClickTimesMs(cursorPath).map((ms) => Math.round(ms / 1000));
+  if (!clicks.length) return `No click events captured. Total duration: ~${totalSecs}s.`;
+  return `Click events at seconds: ${clicks.slice(0, 40).join(", ")}. Total duration: ~${totalSecs}s.`;
 }
 
 // ── LLM Analysis ─────────────────────────────────────────────────────────────
@@ -252,7 +257,7 @@ function analysisToCaptions(analysis: AutoZoomAnalysis): Caption[] {
   }));
 }
 
-// ── Cuts (trim dead intro/outro) ──────────────────────────────────────────────
+// ── Cuts (trim dead time, head/tail AND between features) ─────────────────────
 
 /** Editor's ClipRegion shape at speed=1 — startMs/endMs are source-video timestamps. */
 interface EditorClipRegion {
@@ -264,49 +269,147 @@ interface EditorClipRegion {
 
 /** Below this, a trim isn't worth making — avoids micro-cuts from timing noise. */
 const MIN_CUT_MS = 2500;
+/** Mid-recording gaps shorter than this are pacing, not dead time — keep them. */
+const MIN_MID_GAP_MS = 6000;
+/** Padding kept around feature boundaries so cuts never clip the action. */
+const CUT_PAD_MS = 1000;
 
 /**
- * The demo rarely starts the instant the recording does (desktop, app launch,
- * clicking into the window) — trim the dead time before the first feature and
- * after the last one. Only the head/tail are touched; nothing between features
- * is cut, since mid-recording gaps may still be meaningful context.
+ * Derives the kept segments (editor ClipRegions) from the analysis:
+ * - dead time before the first feature and after the last is trimmed (v3 behavior);
+ * - dead gaps BETWEEN features are also cut, but only when they're long
+ *   (> MIN_MID_GAP_MS), click-free (clicks mean something happened even if the
+ *   LLM didn't label it), and past the end of the previous feature's narration
+ *   (an audio region must never overlap a trim — export clips it, playback
+ *   skips it mid-sentence).
+ * The gaps between the returned clips are auto-derived as trims by the editor,
+ * so playback/export join the kept segments seamlessly; the user can further
+ * split/delete/adjust the clips on the timeline.
+ * Returns null when there is nothing worth cutting.
  */
-function deriveKeepClip(analysis: AutoZoomAnalysis, durationMs: number): EditorClipRegion | null {
-  if (!analysis.features.length) return null;
-  const firstStartMs = Math.min(...analysis.features.map((f) => f.startMs));
-  const lastEndMs = Math.max(...analysis.features.map((f) => f.endMs));
-  const keepStartMs = Math.max(0, Math.min(durationMs, firstStartMs - 1000));
-  const keepEndMs = Math.max(keepStartMs, Math.min(durationMs, lastEndMs + 1000));
+function deriveKeepClips(opts: {
+  analysis: AutoZoomAnalysis;
+  durationMs: number;
+  clickTimesMs: number[];
+  /** Source-time end of each feature's narration audio (parallel to features); empty when audio disabled. */
+  narrationEndsMs: number[];
+}): EditorClipRegion[] | null {
+  const features = [...opts.analysis.features].sort((a, b) => a.startMs - b.startMs);
+  if (!features.length) return null;
 
-  const headCutMs = keepStartMs;
-  const tailCutMs = Math.max(0, durationMs - keepEndMs);
-  if (headCutMs < MIN_CUT_MS && tailCutMs < MIN_CUT_MS) return null;
+  const keepStartMs = Math.max(0, Math.min(opts.durationMs, features[0].startMs - CUT_PAD_MS));
+  const lastEndMs = Math.max(...features.map((f) => f.endMs));
+  const keepEndMs = Math.max(keepStartMs, Math.min(opts.durationMs, lastEndMs + CUT_PAD_MS));
   // Never cut down to (near) nothing — protects against bogus feature timestamps.
   if (keepEndMs - keepStartMs < MIN_CUT_MS) return null;
 
-  return { id: "clip-1", startMs: keepStartMs, endMs: keepEndMs, speed: 1 };
+  // Removed ranges between consecutive features.
+  const midCuts: Array<{ startMs: number; endMs: number }> = [];
+  for (let i = 0; i < features.length - 1; i++) {
+    const prevEndMs = Math.max(features[i].endMs, opts.narrationEndsMs[i] ?? 0);
+    const nextStartMs = features[i + 1].startMs;
+    if (nextStartMs - prevEndMs < MIN_MID_GAP_MS) continue;
+
+    const cutStartMs = prevEndMs + CUT_PAD_MS;
+    const cutEndMs = nextStartMs - CUT_PAD_MS;
+    if (cutEndMs - cutStartMs < MIN_CUT_MS) continue;
+    if (opts.clickTimesMs.some((t) => t >= cutStartMs && t <= cutEndMs)) continue;
+    midCuts.push({ startMs: cutStartMs, endMs: cutEndMs });
+  }
+
+  const headCutMs = keepStartMs;
+  const tailCutMs = Math.max(0, opts.durationMs - keepEndMs);
+  if (headCutMs < MIN_CUT_MS && tailCutMs < MIN_CUT_MS && midCuts.length === 0) return null;
+
+  // Kept clips = complement of the cuts within [keepStartMs, keepEndMs].
+  const clips: EditorClipRegion[] = [];
+  let cursor = keepStartMs;
+  for (const cut of midCuts) {
+    if (cut.startMs - cursor >= MIN_CUT_MS) {
+      clips.push({ id: `clip-${clips.length + 1}`, startMs: cursor, endMs: cut.startMs, speed: 1 });
+      cursor = cut.endMs;
+    }
+    // If the kept piece would be tiny, skip this cut instead (leave cursor as-is).
+  }
+  if (keepEndMs - cursor >= MIN_CUT_MS || clips.length === 0) {
+    clips.push({ id: `clip-${clips.length + 1}`, startMs: cursor, endMs: keepEndMs, speed: 1 });
+  } else {
+    // Tiny trailing remainder — extend the last clip to keepEndMs instead of a micro-clip.
+    clips[clips.length - 1].endMs = keepEndMs;
+  }
+
+  return clips;
 }
 
-// ── macOS TTS audio ───────────────────────────────────────────────────────────
+// ── macOS TTS audio (one segment per feature) ─────────────────────────────────
 
-async function generateNarrationAudio(analysis: AutoZoomAnalysis, outDir: string): Promise<string | null> {
-  if (process.platform !== "darwin") return null;
-  const script = analysis.features.map((f) => f.narration).join(". ");
-  const aiffPath = path.join(outDir, "narration.aiff");
-  const mp3Path = path.join(outDir, "narration.mp3");
-  await new Promise<void>((resolve, reject) => {
-    const proc = spawn("say", ["-o", aiffPath, script]);
-    proc.on("close", (c) => (c === 0 ? resolve() : reject(new Error(`say exited ${c}`))));
-    proc.on("error", reject);
-  });
+interface NarrationSegment {
+  featureIndex: number;
+  audioPath: string;
+  /** Source-time start/end of this narration region (start = feature.startMs). */
+  startMs: number;
+  endMs: number;
+}
+
+/** Probe an audio file's duration via ffmpeg stderr (same parse as validateRecordedVideo). */
+async function probeAudioDurationMs(audioPath: string): Promise<number> {
   const ffmpeg = await getFfmpegBinaryPath();
-  await new Promise<void>((resolve, reject) => {
-    const proc = spawn(ffmpeg, ["-i", aiffPath, "-q:a", "2", mp3Path, "-y"]);
-    proc.on("close", (c) => (c === 0 ? resolve() : reject(new Error(`ffmpeg audio exited ${c}`))));
-    proc.on("error", reject);
+  const stderr = await new Promise<string>((resolve) => {
+    const proc = spawn(ffmpeg, ["-hide_banner", "-i", audioPath, "-f", "null", "-"]);
+    let out = "";
+    proc.stderr.on("data", (chunk: Buffer) => {
+      out += chunk.toString();
+    });
+    proc.on("close", () => resolve(out));
+    proc.on("error", () => resolve(out));
   });
-  await fsp.rm(aiffPath, { force: true });
-  return mp3Path;
+  const seconds = parseFfmpegDurationSeconds(stderr);
+  return seconds && seconds > 0 ? Math.round(seconds * 1000) : 0;
+}
+
+/**
+ * One TTS clip per feature, each placed at its feature's start. Per-feature
+ * segments (instead of one long track) keep narration aligned to what's on
+ * screen AND guarantee no audio region ever spans a trimmed gap.
+ */
+async function generateNarrationSegments(
+  analysis: AutoZoomAnalysis,
+  outDir: string,
+): Promise<NarrationSegment[]> {
+  if (process.platform !== "darwin") return [];
+  await fsp.mkdir(outDir, { recursive: true });
+  const ffmpeg = await getFfmpegBinaryPath();
+  const segments: NarrationSegment[] = [];
+
+  for (let i = 0; i < analysis.features.length; i++) {
+    const feature = analysis.features[i];
+    const text = feature.narration?.trim();
+    if (!text) continue;
+
+    const aiffPath = path.join(outDir, `narration-${String(i + 1).padStart(2, "0")}.aiff`);
+    const mp3Path = path.join(outDir, `narration-${String(i + 1).padStart(2, "0")}.mp3`);
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn("say", ["-o", aiffPath, text]);
+      proc.on("close", (c) => (c === 0 ? resolve() : reject(new Error(`say exited ${c}`))));
+      proc.on("error", reject);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn(ffmpeg, ["-i", aiffPath, "-q:a", "2", mp3Path, "-y"]);
+      proc.on("close", (c) => (c === 0 ? resolve() : reject(new Error(`ffmpeg audio exited ${c}`))));
+      proc.on("error", reject);
+    });
+    await fsp.rm(aiffPath, { force: true });
+
+    const durationMs = await probeAudioDurationMs(mp3Path);
+    segments.push({
+      featureIndex: i,
+      audioPath: mp3Path,
+      startMs: feature.startMs,
+      endMs: feature.startMs + (durationMs || 3000),
+    });
+  }
+
+  return segments;
 }
 
 // ── Refinement (chat) ─────────────────────────────────────────────────────────
@@ -347,37 +450,30 @@ async function assembleProject(opts: {
   videoPath: string;
   zoomRegions: unknown[];
   captions: Caption[];
-  audioPath: string | null;
+  narrationSegments: NarrationSegment[];
   cropRegion: AutoZoomContentRect;
-  keepClip: EditorClipRegion | null;
+  keepClips: EditorClipRegion[] | null;
   analysis: AutoZoomAnalysis;
   outDir: string;
 }): Promise<string> {
-  // The narration track is one continuous clip spanning the video — clamp it to the
-  // kept span so it doesn't play into the trimmed dead intro/outro.
-  const audioStartMs = opts.keepClip?.startMs ?? 0;
-  const audioEndMs = opts.keepClip?.endMs ?? opts.analysis.totalDurationMs;
-
   const editor = {
     zoomRegions: opts.zoomRegions,
     showCursor: true,
     loopCursor: false,
     ...(opts.cropRegion !== IDENTITY_CROP ? { cropRegion: opts.cropRegion } : {}),
-    ...(opts.keepClip ? { clipRegions: [opts.keepClip] } : {}),
+    ...(opts.keepClips?.length ? { clipRegions: opts.keepClips } : {}),
     ...(opts.captions.length ? { autoCaptions: opts.captions } : {}),
-    ...(opts.audioPath
+    ...(opts.narrationSegments.length
       ? {
-          audioRegions: [
-            {
-              id: "audio-1",
-              startMs: audioStartMs,
-              endMs: audioEndMs,
-              audioPath: opts.audioPath,
-              volume: 1,
-              normalize: false,
-              trackIndex: 0,
-            },
-          ],
+          audioRegions: opts.narrationSegments.map((seg, i) => ({
+            id: `audio-${i + 1}`,
+            startMs: seg.startMs,
+            endMs: seg.endMs,
+            audioPath: seg.audioPath,
+            volume: 1,
+            normalize: false,
+            trackIndex: 0,
+          })),
         }
       : {}),
   };
@@ -391,7 +487,7 @@ async function assembleProject(opts: {
     autoZoom: {
       source: "auto-zoom",
       analysis: opts.analysis,
-      audioPath: opts.audioPath,
+      audioPaths: opts.narrationSegments.map((seg) => seg.audioPath),
     },
   };
 
@@ -535,26 +631,51 @@ export function registerAutoZoomHandlers(): void {
           send(wc, { stage: "captions", status: "done", message: `${captions.length} caption segments` });
         }
 
-        let audioPath: string | null = null;
+        // Narration BEFORE cuts — mid-gap trim boundaries must clear each
+        // feature's narration end so no audio region ever overlaps a trim.
+        let narrationSegments: NarrationSegment[] = [];
         if (opts.enableAudio) {
           try {
             send(wc, { stage: "audio", status: "running", message: "Generating narration audio…" });
-            audioPath = await generateNarrationAudio(activeAnalysis, outDir);
-            send(wc, { stage: "audio", status: "done", message: audioPath ? "Narration ready" : "Audio skipped (non-macOS)" });
+            narrationSegments = await generateNarrationSegments(activeAnalysis, outDir);
+            send(wc, {
+              stage: "audio",
+              status: "done",
+              message: narrationSegments.length
+                ? `${narrationSegments.length} narration segments`
+                : "Audio skipped (non-macOS)",
+            });
           } catch (err) {
             send(wc, { stage: "audio", status: "error", message: `Audio failed: ${String(err)} — continuing without` });
           }
         }
 
         send(wc, { stage: "cuts", status: "running", message: "Trimming dead time…" });
-        const keepClip = deriveKeepClip(activeAnalysis, durationMs);
-        const trimmedMs = keepClip
-          ? Math.max(0, durationMs - (keepClip.endMs - keepClip.startMs))
+        const featureList = activeAnalysis.features;
+        const sortedFeatures = [...featureList].sort((a, b) => a.startMs - b.startMs);
+        const narrationEndsMs = sortedFeatures.map((f) => {
+          const seg = narrationSegments.find((s) => featureList[s.featureIndex] === f);
+          return seg ? seg.endMs : 0;
+        });
+        const keepClips = deriveKeepClips({
+          analysis: activeAnalysis,
+          durationMs,
+          clickTimesMs: readClickTimesMs(activeCursorPath),
+          narrationEndsMs,
+        });
+        const keptMs = keepClips ? keepClips.reduce((sum, c) => sum + (c.endMs - c.startMs), 0) : durationMs;
+        const trimmedMs = Math.max(0, durationMs - keptMs);
+        const cutSegments = keepClips
+          ? (keepClips[0].startMs > 0 ? 1 : 0) +
+            (keepClips[keepClips.length - 1].endMs < durationMs ? 1 : 0) +
+            (keepClips.length - 1)
           : 0;
         send(wc, {
           stage: "cuts",
           status: "done",
-          message: keepClip ? `Trimmed ${Math.round(trimmedMs / 1000)}s of dead intro/outro` : "No dead time to trim",
+          message: keepClips
+            ? `Removed ${cutSegments} dead segment${cutSegments === 1 ? "" : "s"} (${Math.round(trimmedMs / 1000)}s total)`
+            : "No dead time to trim",
         });
 
         send(wc, { stage: "assemble", status: "running", message: "Assembling project…" });
@@ -562,9 +683,9 @@ export function registerAutoZoomHandlers(): void {
           videoPath: activeVideoPath,
           zoomRegions,
           captions,
-          audioPath,
+          narrationSegments,
           cropRegion,
-          keepClip,
+          keepClips,
           analysis: activeAnalysis,
           outDir,
         });
@@ -576,6 +697,7 @@ export function registerAutoZoomHandlers(): void {
           vanillaRegions: vanillaCount,
           deepZooms: zoomRegions.filter((r) => r.depth >= 3).length,
           trimmedMs,
+          cutSegments,
           cropApplied: cropRegion !== IDENTITY_CROP,
           captions: captions.length,
           features: activeAnalysis.features.length,

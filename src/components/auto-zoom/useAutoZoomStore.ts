@@ -41,6 +41,7 @@ export interface AutoZoomSummary {
   vanillaRegions: number;
   deepZooms: number;
   trimmedMs: number;
+  cutSegments: number;
   cropApplied: boolean;
   captions: number;
   features: number;

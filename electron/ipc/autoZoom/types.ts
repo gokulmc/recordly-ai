@@ -49,6 +49,8 @@ export interface AutoZoomSummary {
   vanillaRegions: number;
   deepZooms: number;
   trimmedMs: number;
+  /** Number of removed dead segments (head + tail + mid-feature gaps). */
+  cutSegments: number;
   cropApplied: boolean;
   captions: number;
   features: number;
