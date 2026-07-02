@@ -14,12 +14,13 @@ const STAGE_LABELS: Record<string, string> = {
   zooms: "Deriving zoom regions",
   captions: "Building captions",
   audio: "Generating narration",
+  music: "Generating music bed",
   cuts: "Trimming dead time",
   assemble: "Assembling project",
   open: "Opening in editor",
 };
 
-const STAGE_ORDER = ["zooms", "captions", "audio", "cuts", "assemble", "open"];
+const STAGE_ORDER = ["zooms", "audio", "captions", "music", "cuts", "assemble", "open"];
 
 function StageIcon({ status }: { status: string }) {
   if (status === "running") return <CircleNotchIcon size={15} weight="bold" style={{ color: "var(--launch-accent)", animation: "spin 0.7s linear infinite", flexShrink: 0 }} />;

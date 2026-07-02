@@ -1097,7 +1097,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		ipcRenderer.invoke("auto-zoom:analyze", opts) as Promise<{ success: boolean }>,
 	autoZoomRefineAnalysis: (feedback: string) =>
 		ipcRenderer.invoke("auto-zoom:refine-analysis", feedback) as Promise<{ success: boolean }>,
-	autoZoomGenerate: (opts: { enableCaptions: boolean; enableAudio: boolean; enableAutoCrop: boolean }) =>
+	autoZoomGenerate: (opts: { enableCaptions: boolean; enableAudio: boolean; enableAutoCrop: boolean; enableMusic?: boolean }) =>
 		ipcRenderer.invoke("auto-zoom:generate", opts) as Promise<{ projectPath: string }>,
 	autoZoomRefinement: (query: string) =>
 		ipcRenderer.invoke("auto-zoom:refinement", query) as Promise<{ success: boolean }>,

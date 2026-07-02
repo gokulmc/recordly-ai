@@ -1000,7 +1000,7 @@ interface Window {
 		autoZoomSetArmed: (armed: boolean) => Promise<{ success: boolean }>;
 		autoZoomAnalyze: (opts: { videoPath: string; cursorPath: string }) => Promise<{ success: boolean }>;
 		autoZoomRefineAnalysis: (feedback: string) => Promise<{ success: boolean }>;
-		autoZoomGenerate: (opts: { enableCaptions: boolean; enableAudio: boolean; enableAutoCrop: boolean }) => Promise<{ projectPath: string }>;
+		autoZoomGenerate: (opts: { enableCaptions: boolean; enableAudio: boolean; enableAutoCrop: boolean; enableMusic?: boolean }) => Promise<{ projectPath: string }>;
 		autoZoomRefinement: (query: string) => Promise<{ success: boolean }>;
 		autoZoomRefineRegions: (opts: { query: string; zoomRegions: unknown[] }) => Promise<{ success: boolean; zoomRegions?: unknown[]; message?: string; error?: string }>;
 		autoZoomCancel: () => Promise<void>;

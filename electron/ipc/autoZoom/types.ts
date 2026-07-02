@@ -1,5 +1,12 @@
 /** Shared types for the Auto Zoom feature (main process). */
 
+export interface AutoZoomNarrationLine {
+  /** Short spoken-style clause, ≤ ~9 words. */
+  text: string;
+  /** Source-time moment this line describes (spoken at/near this time). */
+  timeMs: number;
+}
+
 export interface AutoZoomFeature {
   name: string;
   description: string;
@@ -7,6 +14,9 @@ export interface AutoZoomFeature {
   endMs: number;
   interactions: Array<{ label: string; timeMs: number }>;
   narration: string;
+  /** 2-4 short lines distributed across the feature span — fills dead air and
+   * doubles as caption cues. Falls back to [{text: narration, timeMs: startMs}]. */
+  narrationLines?: AutoZoomNarrationLine[];
   importance?: "low" | "medium" | "high";
 }
 
